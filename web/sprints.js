@@ -1,6 +1,6 @@
 // Sprint calendar maths: one anchor sprint generates every other sprint, back to back.
 // Pure functions, no DOM.
-import { computeCapacity, dayOfWeek, parseISO, toISO } from './capacity.js';
+import { computeCapacity, dayOfWeek, parseISO, toISO, workingDays } from './capacity.js';
 
 const DAY_MS = 86400000;
 export const DEFAULT_BASE = { number: 1, startDate: '', length: 14 };
@@ -123,4 +123,21 @@ export function dayCapacity(state, date) {
   out.available = Math.round(out.available * 100) / 100;
   out.points = Math.round(out.available * ppd * 100) / 100;
   return out;
+}
+
+/**
+ * Where a sprint stands relative to `today`.
+ * current: working days left (today included when it is a working day) and calendar days until the last day.
+ * upcoming: days until it starts. past: days since it ended.
+ */
+export function sprintProgress(state, n, today) {
+  const w = sprintDatesFor(state, n);
+  if (!w || parseISO(today) === null) return null;
+  const diff = (a, b) => Math.round((parseISO(b) - parseISO(a)) / DAY_MS);
+  if (today < w.start) return { status: 'upcoming', startsIn: diff(today, w.start) };
+  if (today > w.end) return { status: 'past', endedAgo: diff(w.end, today) };
+  const workingLeft = workingDays({
+    dateMode: 'range', startDate: today, endDate: w.end, weekendDays: state.weekendDays, holidays: state.holidays,
+  }).length;
+  return { status: 'current', workingLeft, endsIn: diff(today, w.end), lastDay: w.end };
 }

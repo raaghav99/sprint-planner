@@ -115,6 +115,20 @@ test('overview lists all seven sprints and opens one when selected', async ({ pa
   await expect(page.locator('#sprint-heading')).toContainText('Sprint 16');
 });
 
+test('shows how many days are left in the sprint', async ({ page }) => {
+  await setAnchor(page); // today is Wed 18 Nov, sprint 14 ends Sun 22 Nov
+  await expect(page.locator('#sprint-left')).toContainText('3 working days left');
+  await expect(page.locator('#sprint-left')).toContainText('ends in 4 days');
+  await tab(page, 15).click();
+  await expect(page.locator('#sprint-left')).toHaveText('Starts in 5 days');
+  await tab(page, 13).click();
+  await expect(page.locator('#sprint-left')).toHaveText('Ended 10 days ago');
+  await tab(page, 14).click();
+  await page.fill('#holiday-input', '2026-11-19');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.locator('#sprint-left')).toContainText('2 working days left');
+});
+
 // ------------------------------------------------------------------ capacity
 test('calculates capacity from dates, people, fixed points and buffer', async ({ page }) => {
   await setAnchor(page);

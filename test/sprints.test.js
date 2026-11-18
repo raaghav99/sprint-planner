@@ -153,3 +153,30 @@ test('dayCapacity: bad date and empty team do not throw', () => {
   assert.equal(dayCapacity(dayState, 'nope').working, false);
   assert.equal(dayCapacity({}, '2026-11-18').team, 0);
 });
+
+// ---------- sprintProgress (days left) ----------
+import { sprintProgress } from '../web/sprints.js';
+
+const prog = { sprintBase: { number: 14, startDate: '2026-11-09', length: 14 }, weekendDays: [0, 6], holidays: [] };
+
+test('sprintProgress: current sprint counts working days left, today included', () => {
+  const p = sprintProgress(prog, 14, '2026-11-18'); // Wed; ends Sun 22
+  assert.deepEqual([p.status, p.workingLeft, p.endsIn], ['current', 3, 4]);
+});
+
+test('sprintProgress: first day, last day, and holidays', () => {
+  assert.equal(sprintProgress(prog, 14, '2026-11-09').workingLeft, 10);
+  const last = sprintProgress(prog, 14, '2026-11-22');
+  assert.deepEqual([last.workingLeft, last.endsIn], [0, 0]); // a Sunday
+  assert.equal(sprintProgress({ ...prog, holidays: ['2026-11-19'] }, 14, '2026-11-18').workingLeft, 2);
+});
+
+test('sprintProgress: upcoming and past sprints', () => {
+  assert.deepEqual(sprintProgress(prog, 15, '2026-11-18'), { status: 'upcoming', startsIn: 5 });
+  assert.deepEqual(sprintProgress(prog, 13, '2026-11-18'), { status: 'past', endedAgo: 10 });
+});
+
+test('sprintProgress: no anchor or bad date gives null', () => {
+  assert.equal(sprintProgress({}, 14, '2026-11-18'), null);
+  assert.equal(sprintProgress(prog, 14, 'x'), null);
+});

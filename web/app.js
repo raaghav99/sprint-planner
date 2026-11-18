@@ -2,7 +2,7 @@ import { ROOM_ID, WORKER_URL } from './config.js';
 import { SyncClient } from './sync.js';
 import { parseLeaveSheet } from './parser.js';
 import {
-  capacityFor, currentSprint, dayCapacity, overview, sprintDatesFor, sprintNumbers, spillInFor, DEFAULT_BASE,
+  capacityFor, currentSprint, dayCapacity, overview, sprintDatesFor, sprintProgress, sprintNumbers, spillInFor, DEFAULT_BASE,
 } from './sprints.js';
 import {
   applyPaste, barSegments, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
@@ -231,6 +231,7 @@ function render() {
   if (hasSprints) {
     renderTabs(s, numbers, current);
     renderSprint(s, cap, current);
+    renderLeft(s, now);
     renderFixed(s);
     renderSpill(s);
     renderOverview(s, now);
@@ -294,6 +295,18 @@ function renderSprint(s, cap, current) {
   ];
   $('breakdown').innerHTML = rows.map(([k, label, v]) =>
     `<div><dt>${esc(label)} ${info(k, label)}</dt><dd data-k="${k}">${fmtNum(v)}</dd></div>`).join('');
+}
+
+function renderLeft(s, now) {
+  const p = sprintProgress(s, selected, now);
+  const el = $('sprint-left');
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  el.className = `left ${p?.status ?? ''}`;
+  if (!p) { el.textContent = ''; return; }
+  if (p.status === 'current') {
+    el.innerHTML = `<b>${plural(p.workingLeft, 'working day')} left</b> <span>${p.endsIn === 0 ? 'ends today' : `ends in ${plural(p.endsIn, 'day')}`}</span>`;
+  } else if (p.status === 'upcoming') el.textContent = `Starts in ${plural(p.startsIn, 'day')}`;
+  else el.textContent = `Ended ${plural(p.endedAgo, 'day')} ago`;
 }
 
 function renderFixed(s) {

@@ -223,6 +223,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 .tab.now:not([aria-selected='true']) { border-color: var(--net); box-shadow: inset 0 -3px 0 var(--net); }
 
 .sprint-head { display: flex; align-items: baseline; gap: 6px 16px; flex-wrap: wrap; }
+.left { font-size: 0.875rem; color: var(--muted); }
+.left b { color: var(--ink); font-weight: 600; }
+.left.current { padding: 1px 10px; border-radius: 999px; border: 1px solid var(--net); color: var(--ink); }
 .override { font-size: 0.9rem; }
 .override summary { cursor: pointer; color: var(--muted); width: fit-content; text-decoration: underline; text-underline-offset: 3px; }
 .override-body { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; padding: 12px 0 4px; }
