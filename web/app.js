@@ -1,13 +1,12 @@
 import { ROOM_ID, WORKER_URL } from './config.js';
 import { SyncClient } from './sync.js';
-import { workingDays } from './capacity.js';
 import { parseLeaveSheet } from './parser.js';
 import {
-  capacityFor, currentSprint, overview, sprintDatesFor, sprintNumbers, spillInFor, DEFAULT_BASE,
+  capacityFor, currentSprint, dayCapacity, overview, sprintDatesFor, sprintNumbers, spillInFor, DEFAULT_BASE,
 } from './sprints.js';
 import {
   applyPaste, barSegments, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
-  portionOn, replaceSprints, sanitizeBackup, summarizeLeave,
+  portionOn, replaceSprints, sanitizeBackup,
 } from './view.js';
 
 const $ = (id) => document.getElementById(id);
@@ -237,6 +236,7 @@ function render() {
     renderOverview(s, now);
   }
   renderTeam(s, cap);
+  renderToday(s, now);
   renderRetention(s);
 }
 
@@ -330,70 +330,119 @@ function renderTeam(s, cap) {
     : cap ? `${cap.activeMembers} active in Sprint ${selected}, ${n} ${n === 1 ? 'person' : 'people'} on the list.`
       : `${n} ${n === 1 ? 'person' : 'people'} on the list.`;
 
-  const days = cap
-    ? workingDays({ dateMode: 'range', startDate: cap.sprint.start, endDate: cap.sprint.end, weekendDays: s.weekendDays, holidays: s.holidays })
-    : [];
+  const table = $('team-list');
+  const ae = document.activeElement;
+  const typing = ae?.matches?.('#team-list input');
   const byId = new Map((cap?.members ?? []).map((m) => [m.id, m]));
 
-  // Someone is typing a date inside a person's panel: refresh the summary rows only, so the
-  // input keeps its focus and caret.
-  const ae = document.activeElement;
-  if (ae?.matches?.('#team-list input')) {
-    for (const li of $('team-list').querySelectorAll('li.person')) {
-      const m = s.members.find((x) => x.id === li.dataset.id);
-      const rowEl = li.querySelector('.person-row');
-      if (!m || !rowEl) continue;
+  if (!n) { table.innerHTML = '<tbody><tr><td class="empty-note">Add a person above, or paste your leave table.</td></tr></tbody>'; return; }
+  if (!cap) {
+    // no sprint yet: names only, the calendar appears once the current sprint is set
+    table.innerHTML = '<tbody>' + s.members.map((m) =>
+      `<tr class="person" data-id="${esc(m.id)}"><th scope="row" class="pname"><span class="p-name">${esc(m.name)}</span></th>` +
+      `<td class="pact"><button type="button" class="rm" data-member="${esc(m.id)}" aria-label="Remove ${esc(m.name)}">×</button></td></tr>`).join('') +
+      '</tbody><tfoot><tr><td colspan="2" class="empty-note">Set the current sprint on the left to see the calendar.</td></tr></tfoot>';
+    return;
+  }
+
+  // Someone is typing a date in a person's panel: update totals and notes only, so the input keeps its caret.
+  if (typing) {
+    for (const m of s.members) {
       const c = byId.get(m.id);
-      rowEl.outerHTML = personRow(m, c, days, expandedId === m.id);
-      li.classList.toggle('idle', Boolean(c && c.available === 0));
+      const sum = table.querySelector(`[data-sum="${CSS.escape(m.id)}"]`);
+      if (sum && c) sum.innerHTML = sumCell(c);
+      const name = table.querySelector(`tr.person[data-id="${CSS.escape(m.id)}"] .pname`);
+      if (name && c) {
+        name.querySelector('small')?.remove();
+        const note = memberNote(c);
+        if (note) name.insertAdjacentHTML('beforeend', `<small>${note}</small>`);
+        name.closest('tr').classList.toggle('idle', c.available === 0);
+      }
     }
     return;
   }
   const focused = ae?.closest?.('#team-list') ? { ...ae.dataset } : null;
+  const dates = cap.sprint.dates;
+  const weekend = new Set(s.weekendDays);
+  const holidays = new Set(s.holidays);
+  const dow = (d) => new Date(`${d}T00:00:00Z`).getUTCDay();
 
-  $('team-list').innerHTML = s.members.length ? s.members.map((m) => {
+  const head = dates.map((d) => {
+    const rest = weekend.has(dow(d)) ? 'weekend' : holidays.has(d) ? 'holiday' : '';
+    const first = d === dates[0] || d.endsWith('-01');
+    return `<th scope="col" class="dh ${rest}" title="${esc(fmtDate(d, { year: true }))}${rest ? ` (${rest})` : ''}"><i>${first ? fmtDate(d).split(' ')[2] ?? '' : ''}</i><span>${DAY_NAMES[dow(d)].slice(0, 2)}</span><b>${Number(d.slice(8))}</b></th>`;
+  }).join('');
+
+  const rows = s.members.map((m) => {
     const c = byId.get(m.id);
-    return `<li class="person${c && c.available === 0 ? ' idle' : ''}" data-id="${esc(m.id)}">` +
-      personRow(m, c, days, expandedId === m.id) + (expandedId === m.id ? personPanel(m, days) : '') + '</li>';
-  }).join('') : '<li class="empty-note">Add a person above, or paste your leave table.</li>';
+    const open = expandedId === m.id;
+    const note = c ? memberNote(c) : '';
+    const cells = dates.map((d) => {
+      const nonWorking = weekend.has(dow(d)) || holidays.has(d);
+      if ((m.from && d < m.from) || (m.until && d > m.until)) return '<td class="dc"><span class="cell na" title="Not on the team"></span></td>';
+      const p = portionOn(m.leave, d);
+      const state = p === 0 ? (nonWorking ? 'rest' : 'on') : p === 1 ? 'off' : 'half';
+      const label = p === 0 ? (nonWorking ? 'not a working day' : 'working') : p === 1 ? 'off' : 'half day';
+      return `<td class="dc${nonWorking ? ' nw' : ''}"><button type="button" class="cell ${state}" data-member="${esc(m.id)}" data-date="${d}" aria-label="${esc(m.name)}, ${esc(fmtDate(d))}: ${label}. Select to change." title="${esc(fmtDate(d))}: ${label}"></button></td>`;
+    }).join('');
+    return `<tr class="person${c && c.available === 0 ? ' idle' : ''}" data-id="${esc(m.id)}">` +
+      `<th scope="row" class="pname"><span class="p-name" title="${esc(m.name)}">${esc(m.name)}</span>${note ? `<small>${note}</small>` : ''}</th>${cells}` +
+      `<td class="psum" data-sum="${esc(m.id)}">${c ? sumCell(c) : ''}</td>` +
+      `<td class="pact"><button type="button" class="link edit" data-member="${esc(m.id)}" aria-expanded="${open}" aria-label="Edit dates for ${esc(m.name)}">${open ? 'Close' : 'Dates'}</button>` +
+      `<button type="button" class="rm" data-member="${esc(m.id)}" aria-label="Remove ${esc(m.name)}">×</button></td></tr>` +
+      (open ? `<tr class="dates-row"><td colspan="${dates.length + 3}">${personDates(m)}</td></tr>` : '');
+  }).join('');
+
+  table.innerHTML = `<thead><tr><th scope="col" class="pname">Person</th>${head}<th scope="col" class="psum">Days</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody>`;
 
   if (focused?.member && focused?.date) {
-    $('team-list').querySelector(`button.cell[data-member="${CSS.escape(focused.member)}"][data-date="${focused.date}"]`)?.focus();
+    table.querySelector(`button.cell[data-member="${CSS.escape(focused.member)}"][data-date="${focused.date}"]`)?.focus();
   }
 }
 
-function personRow(m, c, days, open) {
-  const leave = summarizeLeave(m.leave, days);
-  const chips = leave.slice(0, 4).map((l) => `<span class="chip ${l.portion === 1 ? 'off' : 'half'}">${esc(fmtDate(l.date))}${l.portion === 1 ? '' : ' half'}</span>`).join('') +
-    (leave.length > 4 ? `<span class="chip more">+${leave.length - 4} more</span>` : '');
-  let status = '';
-  if (c && c.activeDays === 0) status = 'Not on the team this sprint';
-  else if (c && c.available === 0) status = 'Off the whole sprint';
-  return `<div class="person-row"><span class="p-name" title="${esc(m.name)}">${esc(m.name)}</span>` +
-    (status ? `<span class="p-status">${status}</span>` : `<span class="p-chips">${chips || '<span class="p-none">No leave</span>'}</span>`) +
-    (c ? `<span class="p-days">${fmtNum(c.available)} days</span><span class="p-points">${fmtNum(c.points)} points</span>` : '') +
-    `<button type="button" class="link edit" data-member="${esc(m.id)}" aria-expanded="${open}" aria-label="Edit days for ${esc(m.name)}">${open ? 'Close' : 'Edit days'}</button>` +
-    `<button type="button" class="rm" data-member="${esc(m.id)}" aria-label="Remove ${esc(m.name)}">×</button></div>`;
-}
+const memberNote = (c) => (c.activeDays === 0 ? 'Not on the team this sprint' : c.available === 0 ? 'Off the whole sprint' : '');
+const sumCell = (c) => `<b>${fmtNum(c.available)}</b><small>${fmtNum(c.points)} pts</small>`;
 
-function personPanel(m, days) {
-  const cells = days.map((d) => {
-    const p = portionOn(m.leave, d);
-    const state = p === 0 ? 'on' : p === 1 ? 'off' : 'half';
-    const label = p === 0 ? 'working' : p === 1 ? 'off' : 'half day';
-    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
-    return `<div class="dcell"><span class="dlab">${DAY_NAMES[dow].slice(0, 2)} ${Number(d.slice(8))}</span><button type="button" class="cell ${state}" data-member="${esc(m.id)}" data-date="${d}" aria-label="${esc(m.name)}, ${esc(fmtDate(d))}: ${label}. Select to change." title="${esc(fmtDate(d))}: ${label}"></button></div>`;
-  }).join('');
-  return `<div class="person-edit">` +
-    (days.length ? `<div class="dgrid" role="group" aria-label="Days for ${esc(m.name)}">${cells}</div>
-      <ul class="key" aria-label="Key"><li><span class="cell on"></span> Working</li><li><span class="cell half"></span> Half day</li><li><span class="cell off"></span> Off</li></ul>`
-      : '<p class="hint">Set the current sprint to edit days.</p>') +
-    `<div class="joined">
+function personDates(m) {
+  return `<div class="joined">
       <label>Joined <button type="button" class="info" data-tip="The first day this person is on the team. Leave empty if they were here before the sprints you look at. Earlier sprints will not count them." aria-label="About joined date">i</button>
         <input type="date" data-member="${esc(m.id)}" data-prop="from" value="${esc(m.from ?? '')}" aria-label="Joined ${esc(m.name)}"></label>
       <label>Last day <button type="button" class="info" data-tip="The last day this person is on the team. Leave empty if they are still here. Later sprints will not count them." aria-label="About last day">i</button>
         <input type="date" data-member="${esc(m.id)}" data-prop="until" value="${esc(m.until ?? '')}" aria-label="Last day of ${esc(m.name)}"></label>
-    </div></div>`;
+    </div>`;
+}
+
+/** The small "today" card: who can work today and who is on leave. Always about the real today. */
+function renderToday(s, now) {
+  const card = $('today');
+  const ok = sprintNumbers(s, now).length > 0;
+  card.hidden = !ok;
+  if (!ok) return;
+  const d = dayCapacity(s, now);
+  const label = fmtDate(now);
+  const line = $('today-line');
+  const people = $('today-people');
+  const leave = $('today-leave');
+  if (!d.working) {
+    line.textContent = `${label}: ${d.reason === 'holiday' ? 'holiday' : 'weekend'}, not a working day.`;
+    people.innerHTML = '';
+    people.removeAttribute('aria-label');
+    leave.textContent = '';
+    return;
+  }
+  line.innerHTML = `<b>${fmtNum(d.available)}</b> of ${d.team} ${d.team === 1 ? 'person' : 'people'} available on ${esc(label)}, <b>${fmtNum(d.points)}</b> points`;
+  const squares = [];
+  const byName = new Map(d.onLeave.map((l) => [l.name, l.portion]));
+  for (const m of s.members) {
+    if ((m.from && now < m.from) || (m.until && now > m.until)) continue;
+    const p = byName.get(m.name) ?? 0;
+    squares.push(`<span class="sq ${p === 0 ? 'on' : p >= 1 ? 'off' : 'half'}" title="${esc(m.name)}${p ? (p >= 1 ? ': on leave' : ': half day') : ''}"></span>`);
+  }
+  people.innerHTML = squares.join('');
+  people.setAttribute('aria-label', `${fmtNum(d.available)} of ${d.team} available today`);
+  leave.textContent = d.onLeave.length
+    ? `On leave: ${d.onLeave.map((l) => (l.portion >= 1 ? l.name : `${l.name} (half day)`)).join(', ')}`
+    : d.team ? 'Nobody is on leave.' : '';
 }
 
 function renderRetention(s) {
@@ -503,7 +552,7 @@ function previewPaste() {
     return;
   }
   const newHints = parsed.holidayHints.filter((d) => !s.holidays.includes(d));
-  const keepHints = () => (document.getElementById('paste-hint')?.checked ?? true);
+  const keepHints = () => (document.getElementById('paste-hint')?.checked ?? false);
   const holidays = [...new Set([...s.holidays, ...(newHints.length && keepHints() ? newHints : [])])].sort();
   const next = { ...s, members, holidays };
   const hasSprints = sprintNumbers(next, today()).length > 0;
@@ -524,7 +573,7 @@ function previewPaste() {
   for (const e of parsed.errors.slice(0, 5)) msgs.push(`<p class="msg err">${e.row ? `Row ${e.row}: ` : ''}${esc(e.message)}</p>`);
   if (parsed.errors.length > 5) msgs.push(`<p class="msg err">${parsed.errors.length - 5} more problems not shown.</p>`);
   if (newHints.length) {
-    msgs.push(`<label class="holiday"><input type="checkbox" id="paste-hint" ${keepHints() ? 'checked' : ''}> Everyone is off on ${esc(newHints.map((d) => fmtDate(d)).join(', '))}. Add as holidays.</label>`);
+    msgs.push(`<label class="holiday"><input type="checkbox" id="paste-hint" ${keepHints() ? 'checked' : ''}> Everyone is off on ${esc(newHints.map((d) => fmtDate(d)).join(', '))}. Also add as holidays (their days off are kept either way).</label>`);
   }
   if (cap) {
     const rows = cap.members.filter((m) => names.has(m.name.trim().toLowerCase())).map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${fmtNum(m.leaveDays)}</td><td class="n">${fmtNum(m.available)}</td></tr>`).join('');

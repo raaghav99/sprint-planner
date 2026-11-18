@@ -102,16 +102,25 @@
             </div>
           </details>
 
-          <p class="lede">
-            <span id="net" class="big">0</span>
-            <span class="lede-text">points to plan for new stories
-              <button type="button" class="info" data-tip="What is left after fixed points, spillover and the buffer: (gross capacity − fixed points − spillover) minus the buffer. Plan new stories up to this number." aria-label="About points for new stories">i</button>
-            </span>
-          </p>
-          <div id="warnings" class="warnings" role="status"></div>
-
-          <div id="bar" class="bar" role="img" aria-label="Capacity breakdown"></div>
-          <ul id="bar-legend" class="legend"></ul>
+          <div class="summary">
+            <div class="summary-main">
+              <p class="lede">
+                <span id="net" class="big">0</span>
+                <span class="lede-text">points to plan for new stories
+                  <button type="button" class="info" data-tip="What is left after fixed points, spillover and the buffer: (gross capacity − fixed points − spillover) minus the buffer. Plan new stories up to this number." aria-label="About points for new stories">i</button>
+                </span>
+              </p>
+              <div id="warnings" class="warnings" role="status"></div>
+              <div id="bar" class="bar" role="img" aria-label="Capacity breakdown"></div>
+              <ul id="bar-legend" class="legend"></ul>
+            </div>
+            <aside id="today" class="today" aria-labelledby="today-title" hidden>
+              <h3 id="today-title">Today <button type="button" class="info" data-tip="Who can work today, from the leave in the calendar. Each square is one person: filled means available, outlined means on leave, half-filled means half a day." aria-label="About today">i</button></h3>
+              <p id="today-line" class="today-line"></p>
+              <div id="today-people" class="today-people" role="img"></div>
+              <p id="today-leave" class="hint"></p>
+            </aside>
+          </div>
           <dl id="breakdown" class="breakdown"></dl>
         </section>
 
@@ -164,7 +173,8 @@
           <button class="btn" type="submit">Add person</button>
         </form>
 
-        <ul id="team-list" class="team"></ul>
+        <div class="cal-wrap"><table id="team-list" class="cal" aria-label="Team calendar for the selected sprint"></table></div>
+        <ul class="key" aria-label="Key"><li><span class="cell on"></span> Working</li><li><span class="cell half"></span> Half day</li><li><span class="cell off"></span> Off</li><li><span class="cell rest"></span> Weekend or holiday</li></ul>
       </section>
 
       <section id="overview-section" class="overview" aria-labelledby="h-overview" hidden>

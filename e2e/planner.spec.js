@@ -37,7 +37,7 @@ async function addFixed(page, label, points) {
   await page.fill('#fixed-points', String(points));
   await page.getByRole('button', { name: 'Add fixed points' }).click();
 }
-const row = (page, name) => page.locator('#team-list li.person', { hasText: name });
+const row = (page, name) => page.locator('#team-list tr.person', { hasText: name });
 
 test.beforeEach(async ({ page }) => { await resetRoom(page); });
 
@@ -211,7 +211,7 @@ test('people who joined or left only count in the sprints they were on the team'
   await setAnchor(page);
   await addPerson(page, 'Asha');
   await addPerson(page, 'Ben');
-  await row(page, 'Ben').getByRole('button', { name: /Edit days for Ben/ }).click();
+  await row(page, 'Ben').getByRole('button', { name: /Edit dates for Ben/ }).click();
   await page.getByLabel('Last day of Ben').fill('2026-11-08');
   await expect(dd(page, 'activeMembers')).toHaveText('1'); // sprint 14: Ben has left
   await expect(page.locator('#team-count')).toContainText('1 active in Sprint 14');
@@ -228,50 +228,55 @@ test('a person who joins later is not counted before their first day', async ({ 
   await setAnchor(page);
   await addPerson(page, 'Asha');
   await addPerson(page, 'Cy');
-  await row(page, 'Cy').getByRole('button', { name: /Edit days for Cy/ }).click();
+  await row(page, 'Cy').getByRole('button', { name: /Edit dates for Cy/ }).click();
   await page.getByLabel('Joined Cy').fill('2026-11-23');
   await expect(dd(page, 'activeMembers')).toHaveText('1'); // sprint 14
   await tab(page, 15).click();
   await expect(dd(page, 'activeMembers')).toHaveText('2'); // sprint 15 starts 23 Nov
 });
 
-test('the team shows a compact summary, with days only when you open a person', async ({ page }) => {
+test('the full calendar shows every day of the sprint, weekends and holidays included', async ({ page }) => {
   await setAnchor(page);
+  await page.fill('#holiday-input', '2026-11-12');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
   await addPerson(page, 'Asha');
-  await expect(page.locator('#team-list button.cell')).toHaveCount(0); // no full calendar by default
-  await expect(row(page, 'Asha')).toContainText('10 days');
-  await expect(row(page, 'Asha')).toContainText('No leave');
-
-  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click();
-  await expect(page.locator('#team-list button.cell')).toHaveCount(10);
-  await page.getByRole('button', { name: /Asha, Tue 10 Nov/ }).click();
-  await expect(row(page, 'Asha')).toContainText('9 days');
-  await expect(row(page, 'Asha').locator('.chip')).toContainText('Tue 10 Nov');
-  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click();
-  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click(); // working -> off -> half
-  await expect(row(page, 'Asha')).toContainText('8.5 days');
-  await expect(row(page, 'Asha').locator('.chip.half')).toContainText('Wed 11 Nov');
-
-  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click(); // closes
-  await expect(page.locator('#team-list button.cell')).toHaveCount(0);
-  await expect(row(page, 'Asha')).toContainText('8.5 days');
+  await expect(page.locator('#team-list thead th.dh')).toHaveCount(14); // Mon 9 to Sun 22
+  await expect(page.locator('#team-list thead th.weekend')).toHaveCount(4);
+  await expect(page.locator('#team-list thead th.holiday')).toHaveCount(1);
+  await expect(row(page, 'Asha').locator('button.cell')).toHaveCount(14);
+  await expect(row(page, 'Asha').locator('.psum')).toContainText('9');
 });
 
-test('a person with lots of leave shows the first few days and a count of the rest', async ({ page }) => {
+test('marking days off works from the calendar and updates the totals', async ({ page }) => {
   await setAnchor(page);
   await addPerson(page, 'Asha');
-  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click();
-  for (const d of ['Mon 9', 'Tue 10', 'Wed 11', 'Thu 12', 'Fri 13', 'Mon 16']) {
-    await page.getByRole('button', { name: new RegExp(`Asha, ${d} Nov`) }).click();
-  }
-  await expect(row(page, 'Asha').locator('.chip')).toHaveCount(5); // four shown plus "+2 more"
-  await expect(row(page, 'Asha')).toContainText('+2 more');
+  await expect(row(page, 'Asha').locator('.psum b')).toHaveText('10');
+  await page.getByRole('button', { name: /Asha, Tue 10 Nov/ }).click();
+  await expect(row(page, 'Asha').locator('.psum b')).toHaveText('9');
+  await expect(page.getByRole('button', { name: /Asha, Tue 10 Nov/ })).toHaveClass(/off/);
+  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click();
+  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click(); // working -> off -> half
+  await expect(row(page, 'Asha').locator('.psum b')).toHaveText('8.5');
+  await expect(page.getByRole('button', { name: /Asha, Wed 11 Nov/ })).toHaveClass(/half/);
+  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click(); // back to working
+  await expect(row(page, 'Asha').locator('.psum b')).toHaveText('9');
+});
+
+test('a day off on a holiday or weekend stays visible and does not change capacity', async ({ page }) => {
+  await setAnchor(page);
+  await page.fill('#holiday-input', '2026-11-12');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await addPerson(page, 'Asha');
+  await page.getByRole('button', { name: /Asha, Thu 12 Nov/ }).click(); // the holiday
+  await page.getByRole('button', { name: /Asha, Sat 14 Nov/ }).click(); // a weekend day
+  await expect(page.getByRole('button', { name: /Asha, Thu 12 Nov/ })).toHaveClass(/off/);
+  await expect(page.getByRole('button', { name: /Asha, Sat 14 Nov/ })).toHaveClass(/off/);
+  await expect(dd(page, 'personDays')).toHaveText('9'); // not taken off twice
 });
 
 test('grid cells work from the keyboard and keep focus', async ({ page }) => {
   await setAnchor(page);
   await addPerson(page, 'Asha');
-  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click();
   const cell = page.getByRole('button', { name: /Asha, Wed 11 Nov/ });
   await cell.focus();
   await page.keyboard.press('Enter');
@@ -287,6 +292,47 @@ test('a person can be removed', async ({ page }) => {
   await expect(dd(page, 'activeMembers')).toHaveText('0');
 });
 
+test('the calendar follows the selected sprint', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await tab(page, 15).click();
+  await expect(page.getByRole('button', { name: /Asha, Mon 23 Nov/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Asha, Mon 9 Nov/ })).toHaveCount(0);
+});
+
+// ------------------------------------------------------------------ today
+test('the today card shows who can work today and who is on leave', async ({ page }) => {
+  await setAnchor(page); // today is pinned to Wed 18 Nov
+  await expect(page.locator('#today')).toBeVisible();
+  await addPerson(page, 'Asha');
+  await addPerson(page, 'Ben');
+  await addPerson(page, 'Cy');
+  await expect(page.locator('#today-line')).toContainText('3 of 3');
+  await expect(page.locator('#today-leave')).toContainText('Nobody is on leave');
+  await page.getByRole('button', { name: /Ben, Wed 18 Nov/ }).click(); // off
+  await page.getByRole('button', { name: /Cy, Wed 18 Nov/ }).click();
+  await page.getByRole('button', { name: /Cy, Wed 18 Nov/ }).click(); // half
+  await expect(page.locator('#today-line')).toContainText('1.5 of 3');
+  await expect(page.locator('#today-leave')).toContainText('Ben');
+  await expect(page.locator('#today-leave')).toContainText('Cy (half day)');
+  await expect(page.locator('#today-people .sq')).toHaveCount(3);
+  await expect(page.locator('#today-people .sq.off')).toHaveCount(1);
+});
+
+test('the today card always shows today, whichever sprint is open', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await tab(page, 16).click();
+  await expect(page.locator('#today-line')).toContainText('Wed 18 Nov');
+});
+
+test('the today card says so on a weekend', async ({ page }) => {
+  await setAnchor(page);
+  await expect(page.locator('#sync-status')).toContainText('Saved');
+  await page.goto('/?today=2026-11-14');
+  await expect(page.locator('#today-line')).toContainText('weekend');
+});
+
 // ------------------------------------------------------------------ paste
 test('pasting the Excel leave sheet fills people and leave, and offers holidays', async ({ page }) => {
   await setAnchor(page);
@@ -294,14 +340,15 @@ test('pasting the Excel leave sheet fills people and leave, and offers holidays'
   await page.fill('#paste-text', fixture);
   await expect(page.locator('#paste-preview')).toContainText('8 people and 22 date columns');
   await expect(page.locator('#paste-preview')).toContainText('Everyone is off on Mon 9 Nov, Tue 10 Nov');
-  await expect(page.locator('#paste-hint')).toBeChecked();
+  await expect(page.locator('#paste-hint')).not.toBeChecked(); // opt in
   await page.locator('#paste-apply').click();
   await expect(page.locator('#paste-dialog')).not.toBeVisible();
-  await expect(page.locator('#holiday-list')).toContainText('Mon 9 Nov 2026');
-  await expect(dd(page, 'workingDays')).toHaveText('8');
+  await expect(page.locator('#holiday-list')).toBeEmpty();
+  await expect(dd(page, 'workingDays')).toHaveText('10');
+  await expect(page.getByRole('button', { name: /Mina Rao, Mon 9 Nov/ })).toHaveClass(/off/); // off days are kept
   await expect(dd(page, 'personDays')).toHaveText('43');
   await expect(dd(page, 'activeMembers')).toHaveText('7'); // one person is off the whole sprint
-  await expect(page.locator('#team-list li.person')).toHaveCount(8);
+  await expect(page.locator('#team-list tr.person')).toHaveCount(8);
 });
 
 test('pasting keeps people who are not in the sheet, off for the pasted dates', async ({ page }) => {
@@ -314,7 +361,7 @@ test('pasting keeps people who are not in the sheet, off for the pasted dates', 
   await page.locator('#paste-apply').click();
   await expect(row(page, 'Zed')).toHaveCount(1);
   await expect(row(page, 'Zed')).toContainText('Off the whole sprint');
-  await expect(page.locator('#team-list li.person')).toHaveCount(9);
+  await expect(page.locator('#team-list tr.person')).toHaveCount(9);
 });
 
 test('pasting can leave people who are not in the sheet untouched', async ({ page }) => {
@@ -325,7 +372,7 @@ test('pasting can leave people who are not in the sheet untouched', async ({ pag
   await page.locator('#paste-others').uncheck();
   await expect(page.locator('#paste-preview')).toContainText('keep their leave as it is');
   await page.locator('#paste-apply').click();
-  await expect(row(page, 'Zed')).toContainText('8 days'); // not turned off (only the holidays come off)
+  await expect(row(page, 'Zed').locator('.psum b')).toHaveText('10'); // not turned off
   await expect(row(page, 'Zed')).not.toContainText('Off the whole sprint');
 });
 
@@ -334,7 +381,7 @@ test('pasting works before the current sprint is set, and the leave is kept', as
   await page.fill('#paste-text', fixture);
   await expect(page.locator('#paste-preview')).toContainText('Set the current sprint first');
   await page.locator('#paste-apply').click();
-  await expect(page.locator('#team-list li.person')).toHaveCount(8);
+  await expect(page.locator('#team-list tr.person')).toHaveCount(8);
   await setAnchor(page);
   await expect(dd(page, 'personDays')).toHaveText('43'); // pasted leave and holidays were kept
 });
@@ -532,7 +579,6 @@ test('fits a phone screen without sideways page scroll', async ({ page }) => {
   await setAnchor(page);
   await addPerson(page, 'Asha Longname Example');
   await addFixed(page, 'A rather long description of fixed work', 3);
-  await row(page, 'Asha Longname').getByRole('button', { name: /Edit days/ }).click();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });

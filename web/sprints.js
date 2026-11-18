@@ -1,6 +1,6 @@
 // Sprint calendar maths: one anchor sprint generates every other sprint, back to back.
 // Pure functions, no DOM.
-import { computeCapacity, parseISO, toISO } from './capacity.js';
+import { computeCapacity, dayOfWeek, parseISO, toISO } from './capacity.js';
 
 const DAY_MS = 86400000;
 export const DEFAULT_BASE = { number: 1, startDate: '', length: 14 };
@@ -98,4 +98,29 @@ export function overview(state, today) {
       net: c.net,
     };
   });
+}
+
+/**
+ * Who can work on one calendar day. Used for the "today" view.
+ * `working` is false on weekends and holidays; then nobody counts and `reason` says why.
+ * Only people on the team that day (between Joined and Last day) are counted.
+ */
+export function dayCapacity(state, date) {
+  const weekend = new Set(state.weekendDays ?? [0, 6]);
+  const out = { date, working: true, reason: null, team: 0, available: 0, points: 0, onLeave: [] };
+  if (parseISO(date) === null) return { ...out, working: false, reason: 'invalid' };
+  if (weekend.has(dayOfWeek(date))) return { ...out, working: false, reason: 'weekend' };
+  if ((state.holidays ?? []).includes(date)) return { ...out, working: false, reason: 'holiday' };
+  const ppd = Number(state.pointsPerPersonDay) || 0;
+  for (const m of state.members ?? []) {
+    if ((m.from && date < m.from) || (m.until && date > m.until)) continue;
+    out.team += 1;
+    let portion = 0;
+    for (const l of m.leave ?? []) if (l.date === date) portion = Math.max(portion, Math.min(Number(l.portion) || 0, 1));
+    out.available += 1 - portion;
+    if (portion > 0) out.onLeave.push({ name: m.name, portion });
+  }
+  out.available = Math.round(out.available * 100) / 100;
+  out.points = Math.round(out.available * ppd * 100) / 100;
+  return out;
 }

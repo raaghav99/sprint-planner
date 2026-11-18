@@ -114,3 +114,42 @@ test('overview lists 7 sprints with capacity, flags the current one and shows ac
 test('overview is empty until the anchor sprint has a start date', () => {
   assert.deepEqual(overview(st({ sprintBase: DEFAULT_BASE }), '2026-11-18'), []);
 });
+
+// ---------- dayCapacity (today view) ----------
+import { dayCapacity } from '../web/sprints.js';
+
+const dayState = {
+  weekendDays: [0, 6], holidays: ['2026-11-12'], pointsPerPersonDay: 2,
+  members: [
+    { id: 'a', name: 'Asha', leave: [] },
+    { id: 'b', name: 'Ben', leave: [{ date: '2026-11-18', portion: 1 }] },
+    { id: 'c', name: 'Cy', leave: [{ date: '2026-11-18', portion: 0.5 }] },
+    { id: 'd', name: 'Di', from: '2026-11-20', leave: [] },
+    { id: 'e', name: 'Eli', until: '2026-11-17', leave: [] },
+  ],
+};
+
+test('dayCapacity counts people on the team that day and lists who is on leave', () => {
+  const d = dayCapacity(dayState, '2026-11-18');
+  assert.equal(d.working, true);
+  assert.equal(d.team, 3); // Asha, Ben, Cy (Di not joined, Eli left)
+  assert.equal(d.available, 1 + 0 + 0.5);
+  assert.equal(d.points, 3);
+  assert.deepEqual(d.onLeave, [{ name: 'Ben', portion: 1 }, { name: 'Cy', portion: 0.5 }]);
+});
+
+test('dayCapacity: weekends and holidays are not working days', () => {
+  assert.deepEqual([dayCapacity(dayState, '2026-11-14').working, dayCapacity(dayState, '2026-11-14').reason], [false, 'weekend']);
+  assert.equal(dayCapacity(dayState, '2026-11-12').reason, 'holiday');
+  assert.equal(dayCapacity(dayState, '2026-11-12').available, 0);
+});
+
+test('dayCapacity: joined and last day limit who counts', () => {
+  assert.equal(dayCapacity(dayState, '2026-11-20').team, 4); // Asha, Ben, Cy, Di (Eli gone)
+  assert.equal(dayCapacity(dayState, '2026-11-16').team, 4); // Asha, Ben, Cy, Eli
+});
+
+test('dayCapacity: bad date and empty team do not throw', () => {
+  assert.equal(dayCapacity(dayState, 'nope').working, false);
+  assert.equal(dayCapacity({}, '2026-11-18').team, 0);
+});
