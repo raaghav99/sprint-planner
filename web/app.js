@@ -226,6 +226,8 @@ function render() {
   $('setup-note').hidden = hasSprints;
   $('sprint-area').hidden = !hasSprints;
   $('overview-section').hidden = !hasSprints;
+  $('rail-sprint').hidden = !hasSprints;
+  if (hasSprints) $('rail-sprint-name').textContent = `Sprint ${selected}`;
 
   const cap = hasSprints ? capacityFor(s, selected) : null;
   if (hasSprints) {
@@ -425,13 +427,21 @@ function personDates(m) {
     </div>`;
 }
 
-/** The small "today" card: who can work today and who is on leave. Always about the real today. */
+/** The blue panel for the sprint that is running now: points left, days left, active people, who is out today. */
 function renderToday(s, now) {
   const card = $('today');
-  const ok = sprintNumbers(s, now).length > 0;
-  card.hidden = !ok;
-  if (!ok) return;
+  const current = currentSprint(s, now);
+  card.hidden = current === null || !sprintNumbers(s, now).length;
+  if (card.hidden) return;
+  const cap = capacityFor(s, current);
+  const prog = sprintProgress(s, current, now);
   const d = dayCapacity(s, now);
+  $('cur-n').textContent = String(current);
+  $('cur-points').textContent = fmtNum(cap.net);
+  $('cur-days').textContent = prog?.status === 'current' ? String(prog.workingLeft) : '0';
+  $('cur-active').textContent = String(cap.activeMembers);
+  $('cur-leave-count').textContent = String(d.onLeave.length);
+
   const label = fmtDate(now);
   const line = $('today-line');
   const people = $('today-people');
@@ -444,8 +454,8 @@ function renderToday(s, now) {
     return;
   }
   line.innerHTML = `<b>${fmtNum(d.available)}</b> of ${d.team} ${d.team === 1 ? 'person' : 'people'} available on ${esc(label)}, <b>${fmtNum(d.points)}</b> points`;
-  const squares = [];
   const byName = new Map(d.onLeave.map((l) => [l.name, l.portion]));
+  const squares = [];
   for (const m of s.members) {
     if ((m.from && now < m.from) || (m.until && now > m.until)) continue;
     const p = byName.get(m.name) ?? 0;
@@ -454,8 +464,8 @@ function renderToday(s, now) {
   people.innerHTML = squares.join('');
   people.setAttribute('aria-label', `${fmtNum(d.available)} of ${d.team} available today`);
   leave.textContent = d.onLeave.length
-    ? `On leave: ${d.onLeave.map((l) => (l.portion >= 1 ? l.name : `${l.name} (half day)`)).join(', ')}`
-    : d.team ? 'Nobody is on leave.' : '';
+    ? `On leave today: ${d.onLeave.map((l) => (l.portion >= 1 ? l.name : `${l.name} (half day)`)).join(', ')}`
+    : d.team ? 'Nobody is on leave today.' : '';
 }
 
 function renderRetention(s) {

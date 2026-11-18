@@ -333,6 +333,38 @@ test('the today card shows who can work today and who is on leave', async ({ pag
   await expect(page.locator('#today-people .sq.off')).toHaveCount(1);
 });
 
+test('the blue current panel shows points left, days left, active members and who is out today', async ({ page }) => {
+  await setAnchor(page); // today Wed 18 Nov, sprint 14 ends Sun 22 Nov
+  await addPerson(page, 'Asha');
+  await addPerson(page, 'Ben');
+  await addFixed(page, 'Support', 4);
+  await page.getByRole('button', { name: /Ben, Wed 18 Nov/ }).click();
+  await expect(page.locator('#cur-n')).toHaveText('14');
+  await expect(page.locator('#cur-points')).toHaveText('15'); // 20 person-days - 1 day off - 4 fixed
+  await expect(page.locator('#cur-days')).toHaveText('3');
+  await expect(page.locator('#cur-active')).toHaveText('2');
+  await expect(page.locator('#cur-leave-count')).toHaveText('1');
+  await expect(page.locator('#today-leave')).toContainText('On leave today: Ben');
+  await tab(page, 16).click(); // looking at another sprint does not change the current panel
+  await expect(page.locator('#cur-n')).toHaveText('14');
+  await expect(page.locator('#cur-points')).toHaveText('15');
+});
+
+test('fixed points and spillover sit in the left column, below Points', async ({ page }) => {
+  await setAnchor(page);
+  const rail = page.locator('.rail');
+  await expect(rail.locator('#fixed-form')).toBeVisible();
+  await expect(rail.locator('#spillIn')).toBeVisible();
+  const points = await page.locator('#bufferPct').boundingBox();
+  const fixed = await page.locator('#fixed-label').boundingBox();
+  const main = await page.locator('.main').boundingBox();
+  expect(fixed.y).toBeGreaterThan(points.y);
+  expect(fixed.x).toBeLessThan(main.x);
+  await expect(page.locator('#rail-sprint-name')).toHaveText('Sprint 14');
+  await tab(page, 15).click();
+  await expect(page.locator('#rail-sprint-name')).toHaveText('Sprint 15');
+});
+
 test('the today card always shows today, whichever sprint is open', async ({ page }) => {
   await setAnchor(page);
   await addPerson(page, 'Asha');
