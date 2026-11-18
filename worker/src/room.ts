@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
-import { DEFAULT_FIELDS, MAX_MESSAGE_BYTES, validateFields, type RoomState } from './validate';
+import { DEFAULT_FIELDS, MAX_MESSAGE_BYTES, mergeSprints, validateFields, type RoomState } from './validate';
+import { LEGACY_KEYS, migrateState } from '../../web/migrate.js';
 
 /** Data is wiped 3 months (90 days) after the last edit. */
 export const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -18,7 +19,12 @@ export class Room extends DurableObject<Env> {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       const stored = await ctx.storage.get<RoomState>('state');
-      if (stored) this.state = { ...freshState(), ...stored };
+      if (stored) {
+        // data saved by the first (single sprint) version is converted once, here
+        const legacy = LEGACY_KEYS.some((k) => k in stored);
+        this.state = { ...freshState(), ...(migrateState(stored) as Partial<RoomState>) };
+        if (legacy) await ctx.storage.put('state', this.state);
+      }
     });
   }
 
@@ -46,8 +52,15 @@ export class Room extends DurableObject<Env> {
     if (msg?.type === 'set') {
       const v = validateFields(msg.fields);
       if (!v.ok) return reply({ type: 'error', message: v.error });
+      const { sprints: partial, ...rest } = v.fields;
+      let sprints = this.state.sprints;
+      if (partial) {
+        const merged = mergeSprints(sprints, partial as never);
+        if (!merged) return reply({ type: 'error', message: 'Too many sprints' });
+        sprints = merged;
+      }
       const now = Date.now();
-      this.state = { ...this.state, ...v.fields, revision: this.state.revision + 1, updatedAt: now, expiresAt: now + RETENTION_MS };
+      this.state = { ...this.state, ...rest, sprints, revision: this.state.revision + 1, updatedAt: now, expiresAt: now + RETENTION_MS };
       await this.ctx.storage.put('state', this.state);
       await this.ctx.storage.setAlarm(this.state.expiresAt!);
       return this.broadcast(msg.id);

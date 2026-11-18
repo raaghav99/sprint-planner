@@ -7,6 +7,9 @@
 // never make a field flicker back. Offline edits are re-sent after reconnecting.
 
 const OPEN = 1;
+// Map fields merge key by key instead of being replaced whole: two people editing
+// different sprints never overwrite each other. A null value deletes that key.
+const MAP_FIELDS = ['sprints'];
 const BACKOFF = [1000, 2000, 4000, 8000, 15000];
 
 export class SyncClient {
@@ -45,12 +48,18 @@ export class SyncClient {
 
   /** Apply fields locally right now and save them shortly after. */
   update(fields) {
-    this.pending = { ...this.pending, ...fields };
+    this.pending = mergeFields(this.pending, fields);
     this.recompute();
     this.onState(this.state);
     if (this.connected()) this.setStatus('saving');
     clearTimeout(this.flushTimer);
     this.flushTimer = setTimeout(() => this.flush(), this.debounceMs);
+  }
+
+  /** Send pending edits now. Used when the page is being hidden or closed. */
+  flushNow() {
+    clearTimeout(this.flushTimer);
+    this.flush();
   }
 
   /** Delete all room data on the server. Returns false when not connected. */
@@ -78,8 +87,8 @@ export class SyncClient {
 
   recompute() {
     let s = { ...this.server };
-    for (const f of this.inflight.values()) s = { ...s, ...f };
-    this.state = { ...s, ...this.pending };
+    for (const f of this.inflight.values()) s = overlay(s, f);
+    this.state = overlay(s, this.pending);
   }
 
   busy() { return this.inflight.size > 0 || Object.keys(this.pending).length > 0; }
@@ -121,8 +130,8 @@ export class SyncClient {
     if (this.closed) return;
     // anything not acknowledged may or may not have been applied; sending again is safe
     let carried = {};
-    for (const f of this.inflight.values()) carried = { ...carried, ...f };
-    this.pending = { ...carried, ...this.pending };
+    for (const f of this.inflight.values()) carried = mergeFields(carried, f);
+    this.pending = mergeFields(carried, this.pending);
     this.inflight.clear();
     this.synced = false;
     this.setStatus('offline');
@@ -131,4 +140,23 @@ export class SyncClient {
     clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => this.connect(), delay);
   }
+}
+
+/** Combine two sets of edits; later wins. Map fields combine per key. */
+function mergeFields(a, b) {
+  const out = { ...a, ...b };
+  for (const k of MAP_FIELDS) if (k in a && k in b) out[k] = { ...a[k], ...b[k] };
+  return out;
+}
+
+/** Show `edits` on top of `state`. Map fields combine per key; null removes the key. */
+function overlay(state, edits) {
+  const out = { ...state, ...edits };
+  for (const k of MAP_FIELDS) {
+    if (!(k in edits)) continue;
+    const merged = { ...(state[k] ?? {}), ...edits[k] };
+    for (const key of Object.keys(merged)) if (merged[key] === null) delete merged[key];
+    out[k] = merged;
+  }
+  return out;
 }

@@ -132,3 +132,50 @@ test('negative or non-numeric inputs are treated as 0', () => {
   assert.equal(c.gross, 20);
   assert.equal(c.net, 20);
 });
+
+// ---------- spillover, active members, joined / left dates ----------
+test('spillover points come off like fixed points, before the buffer', () => {
+  const c = computeCapacity({ ...base, fixedPoints: 4, spillPoints: 6, bufferPct: 10, members: [m('a'), m('b')] });
+  assert.equal(c.gross, 20);
+  assert.equal(c.spill, 6);
+  assert.equal(c.afterFixed, 10);
+  assert.equal(c.net, 9);
+});
+
+test('fixed + spill larger than gross floors at 0 and warns', () => {
+  const c = computeCapacity({ ...base, fixedPoints: 8, spillPoints: 8, members: [m('a')] });
+  assert.equal(c.net, 0);
+  assert.ok(c.warnings.some((w) => /exceed/i.test(w)));
+});
+
+test('a person who left (until) only counts for days up to their last day', () => {
+  const c = computeCapacity({ ...base, members: [{ ...m('a'), until: '2026-11-06' }] });
+  assert.equal(c.members[0].available, 5); // Nov 2-6
+  assert.equal(c.activeMembers, 1);
+});
+
+test('a person who has not joined yet (from) counts only from their first day', () => {
+  const c = computeCapacity({ ...base, members: [{ ...m('a'), from: '2026-11-09' }] });
+  assert.equal(c.members[0].available, 5); // Nov 9-13
+});
+
+test('active members = people with any available day; leavers drop out', () => {
+  const c = computeCapacity({
+    ...base,
+    members: [m('a'), { ...m('b'), until: '2026-10-31' }, { ...m('c'), from: '2026-12-01' },
+      m('d', ['02', '03', '04', '05', '06', '09', '10', '11', '12', '13'].map((d) => ({ date: `2026-11-${d}`, portion: 1 }))),
+    ],
+  });
+  assert.equal(c.activeMembers, 1); // a only: b left, c not started, d is off every working day
+});
+
+test('leave on days outside a person\'s joined/left window is not double counted', () => {
+  const c = computeCapacity({ ...base, members: [{ ...m('a', [{ date: '2026-11-09', portion: 1 }]), until: '2026-11-06' }] });
+  assert.equal(c.members[0].available, 5);
+  assert.equal(c.members[0].leaveDays, 0);
+});
+
+test('per-person points = available days x points per person-day', () => {
+  const c = computeCapacity({ ...base, pointsPerPersonDay: 1.5, members: [m('a', [{ date: '2026-11-03', portion: 1 }])] });
+  assert.equal(c.members[0].points, 13.5);
+});

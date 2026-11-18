@@ -1,15 +1,17 @@
 // Pure helpers for the UI. No DOM access, so they run under node:test.
 import { parseISO } from './capacity.js';
+import { migrateState, LEGACY_KEYS } from './migrate.js';
 
 export const FIELD_KEYS = [
-  'sprintName', 'dateMode', 'startDate', 'endDate', 'numDays', 'weekendDays',
-  'holidays', 'members', 'pointsPerPersonDay', 'fixedPoints', 'bufferPct',
+  'sprintBase', 'sprints', 'weekendDays', 'holidays', 'members', 'pointsPerPersonDay', 'bufferPct',
 ];
 
 const LIMITS = {
-  numDays: [0, 366, true],
+  number: [1, 9999, true],
+  length: [1, 60, true],
+  points: [0, 100000, false],
+  spill: [0, 100000, false],
   pointsPerPersonDay: [0, 1000, false],
-  fixedPoints: [0, 100000, false],
   bufferPct: [0, 100, false],
 };
 
@@ -62,12 +64,14 @@ export function cycleLeave(leave, date) {
   return rest.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
-/** Parts of the capacity bar, to scale against gross capacity. */
-export function barSegments({ gross, fixed, bufferPoints, net }) {
+/** Parts of the capacity bar, to scale against gross capacity. Fixed and spill are cut to fit. */
+export function barSegments({ gross, fixed, spill = 0, bufferPoints, net }) {
   if (!(gross > 0)) return [];
   const fixedShown = Math.min(fixed, gross);
+  const spillShown = Math.min(spill, gross - fixedShown);
   const parts = [
     { key: 'fixed', value: fixedShown },
+    { key: 'spill', value: spillShown },
     { key: 'buffer', value: bufferPoints },
     { key: 'net', value: net },
   ].filter((p) => p.value > 0);
@@ -76,25 +80,73 @@ export function barSegments({ gross, fixed, bufferPoints, net }) {
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 10);
 
-/** Replace the team with pasted people, keeping ids of people who already exist. */
-export function mergeMembers(existing, parsed) {
-  const byName = new Map(existing.map((m) => [m.name.trim().toLowerCase(), m.id]));
-  return parsed.map((p) => ({
-    id: byName.get(p.name.trim().toLowerCase()) ?? newId(),
-    name: p.name.trim(),
-    leave: p.leave,
-  }));
+const sameName = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * Apply a pasted leave table to the team without losing history.
+ * - People in the paste: leave on the pasted dates is replaced by what was pasted (id, joined and
+ *   left dates are kept). New people are added.
+ * - Everyone else keeps their leave. With `markOthersOff` they are also off on the pasted dates,
+ *   which is how someone who has left the team stops counting in the newer sheet.
+ * Leave on dates the paste does not cover is never touched.
+ */
+export function applyPaste(existing, parsed, { markOthersOff = true } = {}) {
+  const pasted = new Set(parsed.columns ?? []);
+  const outside = (leave) => (leave ?? []).filter((l) => !pasted.has(l.date));
+  const sortLeave = (leave) => leave.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const result = existing.map((m) => ({ ...m }));
+  for (const p of parsed.members) {
+    const at = result.findIndex((m) => sameName(m.name, p.name));
+    if (at >= 0) result[at] = { ...result[at], name: p.name.trim(), leave: sortLeave([...outside(result[at].leave), ...p.leave]) };
+    else result.push({ id: newId(), name: p.name.trim(), leave: sortLeave([...p.leave]) });
+  }
+  if (markOthersOff) {
+    result.forEach((m, i) => {
+      if (parsed.members.some((p) => sameName(p.name, m.name))) return;
+      result[i] = { ...m, leave: sortLeave([...outside(m.leave), ...[...pasted].map((date) => ({ date, portion: 1 }))]) };
+    });
+  }
+  return result;
+}
+
+/** Leave that falls on the given days, in date order (for the compact team summary). */
+export function summarizeLeave(leave, days) {
+  const set = new Set(days);
+  return (leave ?? []).filter((l) => set.has(l.date)).sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
 export function makeMember(name) {
   return { id: newId(), name: name.trim(), leave: [] };
 }
 
-/** Read a downloaded backup file. Returns only known fields, or null if it is not a backup. */
+export function makeFixedItem(label, points) {
+  return { id: newId(), label: String(label ?? '').trim(), points: Number(points) || 0 };
+}
+
+/** Read a downloaded backup file. Returns only known fields (old backups are converted), or null. */
 export function sanitizeBackup(obj) {
   const fields = obj && typeof obj === 'object' ? obj.fields : null;
   if (!fields || typeof fields !== 'object') return null;
+  const legacy = LEGACY_KEYS.some((k) => k in fields);
+  const src = legacy || FIELD_KEYS.some((k) => k in fields) ? migrateState(fields) : null;
+  if (!src) return null;
   const out = {};
-  for (const k of FIELD_KEYS) if (k in fields) out[k] = fields[k];
+  for (const k of FIELD_KEYS) if (k in src) out[k] = src[k];
   return Object.keys(out).length ? out : null;
+}
+
+/** '9 Nov' for tabs and tables. */
+export function fmtShort(iso) {
+  const t = parseISO(iso);
+  if (t === null) return '';
+  const d = new Date(t);
+  return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
+}
+
+/** A `sprints` edit that makes the room match `incoming` exactly (null deletes the rest). */
+export function replaceSprints(current, incoming) {
+  const out = { ...incoming };
+  for (const k of Object.keys(current ?? {})) if (!(k in out)) out[k] = null;
+  return out;
 }

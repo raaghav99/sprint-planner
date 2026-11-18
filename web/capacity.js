@@ -54,33 +54,46 @@ export function workingDays(state) {
   return sprintDates(state).dates.filter((d) => !weekend.has(dayOfWeek(d)) && !holidays.has(d));
 }
 
+/**
+ * Capacity for one sprint.
+ * Input: sprint dates + team + numbers. `fixedPoints` and `spillPoints` both come off gross
+ * before the buffer. A member can have `from` / `until` (joined / last day): days outside that
+ * window do not count, so people who joined or left are only active when they were on the team.
+ */
 export function computeCapacity(state) {
   const warnings = [];
   const days = workingDays(state);
-  const daySet = new Set(days);
   const range = sprintDates(state);
 
   if (range.dates.length === 0) warnings.push('Sprint dates are missing or invalid.');
   else if (days.length === 0) warnings.push('Sprint has no working days.');
 
+  const ppd = num(state.pointsPerPersonDay);
+
   const members = (state.members ?? []).map((mem) => {
+    const active = days.filter((d) => (!mem.from || d >= mem.from) && (!mem.until || d <= mem.until));
+    const activeSet = new Set(active);
     const perDate = new Map(); // dedupe: max portion per date
     for (const l of mem.leave ?? []) {
-      if (!daySet.has(l.date)) continue;
+      if (!activeSet.has(l.date)) continue;
       perDate.set(l.date, Math.max(perDate.get(l.date) ?? 0, Math.min(num(l.portion), 1)));
     }
     let leaveDays = 0;
     for (const p of perDate.values()) leaveDays += p;
     leaveDays = round2(leaveDays);
-    return { id: mem.id, name: mem.name, leaveDays, available: round2(Math.max(days.length - leaveDays, 0)) };
+    const available = round2(Math.max(active.length - leaveDays, 0));
+    return { id: mem.id, name: mem.name, leaveDays, available, points: round2(available * ppd), activeDays: active.length };
   });
 
   const personDays = round2(members.reduce((a, x) => a + x.available, 0));
-  const gross = round2(personDays * num(state.pointsPerPersonDay));
+  const gross = round2(personDays * ppd);
   const fixed = round2(num(state.fixedPoints));
+  const spill = round2(num(state.spillPoints));
   const bufferPct = Math.min(num(state.bufferPct), 100);
-  if (fixed > gross) warnings.push(`Fixed points (${fixed}) exceed gross capacity (${gross}).`);
-  const afterFixed = round2(Math.max(gross - fixed, 0));
+  if (fixed + spill > gross) {
+    warnings.push(`Fixed points (${fixed}) and spillover (${spill}) exceed gross capacity (${gross}).`);
+  }
+  const afterFixed = round2(Math.max(gross - fixed - spill, 0));
   const bufferPoints = round2((afterFixed * bufferPct) / 100);
   const net = round2(afterFixed - bufferPoints);
 
@@ -88,9 +101,11 @@ export function computeCapacity(state) {
     sprint: range,
     workingDays: days.length,
     members,
+    activeMembers: members.filter((x) => x.available > 0).length,
     personDays,
     gross,
     fixed,
+    spill,
     afterFixed,
     bufferPct,
     bufferPoints,

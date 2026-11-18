@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sprint Planner</title>
-  <meta name="description" content="Shared sprint capacity planner: dates, leave, fixed points and buffer in one place.">
+  <meta name="description" content="Shared sprint capacity planner: past and upcoming sprints, leave, fixed points, spillover and buffer in one place.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -24,38 +24,28 @@
   </header>
 
   <main class="layout">
-    <!-- ================= inputs ================= -->
+    <!-- ================= settings shared by every sprint ================= -->
     <div class="rail">
-      <section aria-labelledby="h-sprint">
-        <h2 id="h-sprint">Sprint</h2>
+      <section aria-labelledby="h-anchor">
+        <h2 id="h-anchor">Current sprint</h2>
+        <p class="hint">Set this once. The sprints before and after are worked out from it and follow today's date.</p>
 
         <div class="field">
-          <label for="sprintName">Name <button type="button" class="info" data-tip="A label for this sprint, like Sprint 14. It is only shown to the team." aria-label="About sprint name">i</button></label>
-          <input id="sprintName" type="text" maxlength="80" autocomplete="off" placeholder="Sprint 14">
+          <label for="anchorNumber">Sprint number <button type="button" class="info" data-tip="The number of the sprint that starts on the date below, for example 14. Other sprints are numbered from it." aria-label="About sprint number">i</button></label>
+          <input id="anchorNumber" type="number" min="1" max="9999" step="1" inputmode="numeric">
         </div>
-
         <div class="field">
-          <label for="startDate">Start date <button type="button" class="info" data-tip="The first day of the sprint." aria-label="About start date">i</button></label>
-          <input id="startDate" type="date">
+          <label for="anchorStart">Starts on <button type="button" class="info" data-tip="The first day of the sprint with the number above. It can be any past or future sprint; the rest line up back to back from here." aria-label="About start date">i</button></label>
+          <input id="anchorStart" type="date">
         </div>
+        <div class="field">
+          <label for="anchorLength">Length in days <button type="button" class="info" data-tip="Calendar days per sprint, weekends included. A two-week sprint is 14 days. Change one sprint's dates later if it ran longer or shorter." aria-label="About sprint length">i</button></label>
+          <input id="anchorLength" type="number" min="1" max="60" step="1" inputmode="numeric">
+        </div>
+      </section>
 
-        <fieldset class="field seg" aria-describedby="date-summary">
-          <legend>Sprint length <button type="button" class="info" data-tip="Set the sprint by its last day, or by how many calendar days it runs from the start date. Weekends count here; they are removed from working days below." aria-label="About sprint length">i</button></legend>
-          <div class="segmented">
-            <label><input type="radio" name="dateMode" value="range"> End date</label>
-            <label><input type="radio" name="dateMode" value="days"> Number of days</label>
-          </div>
-        </fieldset>
-
-        <div class="field" id="field-end">
-          <label for="endDate">End date <button type="button" class="info" data-tip="The last day of the sprint. This day is included." aria-label="About end date">i</button></label>
-          <input id="endDate" type="date">
-        </div>
-        <div class="field" id="field-days" hidden>
-          <label for="numDays">Number of days <button type="button" class="info" data-tip="Calendar days from the start date, weekends included. A two-week sprint is 14 days." aria-label="About number of days">i</button></label>
-          <input id="numDays" type="number" min="1" max="366" step="1" inputmode="numeric">
-        </div>
-        <p id="date-summary" class="hint"></p>
+      <section aria-labelledby="h-calendar">
+        <h2 id="h-calendar">Calendar</h2>
 
         <fieldset class="field">
           <legend>Weekends <button type="button" class="info" data-tip="Days that are never worked. Untick a day to make it a working day, for example a Sunday for teams that work Sunday to Thursday." aria-label="About weekends">i</button></legend>
@@ -74,47 +64,99 @@
 
       <section aria-labelledby="h-points">
         <h2 id="h-points">Points</h2>
-
         <div class="field">
-          <label for="pointsPerPersonDay">Points per person-day <button type="button" class="info" data-tip="Story points one person delivers in a full working day. Use 1 if you plan in person-days." aria-label="About points per person-day">i</button></label>
+          <label for="pointsPerPersonDay">Points per person-day <button type="button" class="info" data-tip="Story points one person delivers in a full working day. Use 1 if you plan in person-days. Applies to every sprint." aria-label="About points per person-day">i</button></label>
           <input id="pointsPerPersonDay" type="number" min="0" max="1000" step="0.1" inputmode="decimal">
         </div>
         <div class="field">
-          <label for="fixedPoints">Fixed points <button type="button" class="info" data-tip="Points already spoken for before planning: carry-over, support rotation, recurring work. They are subtracted from capacity first." aria-label="About fixed points">i</button></label>
-          <input id="fixedPoints" type="number" min="0" max="100000" step="0.5" inputmode="decimal">
-        </div>
-        <div class="field">
-          <label for="bufferPct">Buffer % <button type="button" class="info" data-tip="Share of the remaining capacity you keep free for surprises. A 20% buffer on 30 points keeps 6 points unplanned." aria-label="About buffer">i</button></label>
+          <label for="bufferPct">Buffer % <button type="button" class="info" data-tip="Share of the remaining capacity you keep free for surprises. A 20% buffer on 30 points keeps 6 points unplanned. Applies to every sprint." aria-label="About buffer">i</button></label>
           <input id="bufferPct" type="number" min="0" max="100" step="1" inputmode="decimal">
         </div>
       </section>
     </div>
 
-    <!-- ================= results ================= -->
+    <!-- ================= the selected sprint ================= -->
     <div class="main">
-      <section class="result" aria-labelledby="h-result">
-        <h2 id="h-result" class="sr-only">Capacity</h2>
-        <p class="lede">
-          <span id="net" class="big">0</span>
-          <span class="lede-text">points to plan for new stories
-            <button type="button" class="info" data-tip="What is left after fixed points and the buffer: (gross capacity − fixed points) minus the buffer. Plan new stories up to this number." aria-label="About points for new stories">i</button>
-          </span>
-        </p>
-        <div id="warnings" class="warnings" role="status"></div>
+      <p id="setup-note" class="setup" hidden>Set the current sprint's number, start date and length on the left to see this sprint and the ones around it.</p>
 
-        <div id="bar" class="bar" role="img" aria-label="Capacity breakdown"></div>
-        <ul id="bar-legend" class="legend"></ul>
+      <div id="sprint-area" hidden>
+        <div id="sprint-tabs" class="tabs" role="tablist" aria-label="Sprints"></div>
 
-        <dl id="breakdown" class="breakdown"></dl>
-      </section>
+        <section class="result" aria-labelledby="sprint-heading">
+          <div class="sprint-head">
+            <h2 id="sprint-heading">Sprint</h2>
+            <p id="sprint-dates" class="hint"></p>
+          </div>
+          <details class="override">
+            <summary>Change this sprint's dates</summary>
+            <div class="override-body">
+              <div class="field">
+                <label for="sprintStart">Starts <button type="button" class="info" data-tip="Use this when this sprint started on a different day than planned. It only changes this sprint." aria-label="About this sprint's start">i</button></label>
+                <input id="sprintStart" type="date">
+              </div>
+              <div class="field">
+                <label for="sprintEnd">Ends <button type="button" class="info" data-tip="The last day of this sprint, included. It only changes this sprint." aria-label="About this sprint's end">i</button></label>
+                <input id="sprintEnd" type="date">
+              </div>
+              <button type="button" id="dates-reset" class="btn">Use automatic dates</button>
+            </div>
+          </details>
+
+          <p class="lede">
+            <span id="net" class="big">0</span>
+            <span class="lede-text">points to plan for new stories
+              <button type="button" class="info" data-tip="What is left after fixed points, spillover and the buffer: (gross capacity − fixed points − spillover) minus the buffer. Plan new stories up to this number." aria-label="About points for new stories">i</button>
+            </span>
+          </p>
+          <div id="warnings" class="warnings" role="status"></div>
+
+          <div id="bar" class="bar" role="img" aria-label="Capacity breakdown"></div>
+          <ul id="bar-legend" class="legend"></ul>
+          <dl id="breakdown" class="breakdown"></dl>
+        </section>
+
+        <div class="pair">
+          <section class="fixed" aria-labelledby="h-fixed">
+            <h2 id="h-fixed">Fixed story points
+              <button type="button" class="info" data-tip="Points already spoken for before planning, such as support rotation, recurring work or committed items. Add one line for each. They are all subtracted from capacity first." aria-label="About fixed points">i</button>
+            </h2>
+            <ul id="fixed-list" class="items" aria-label="Fixed story points"></ul>
+            <form id="fixed-form" class="add-row">
+              <label for="fixed-label" class="sr-only">What is it for</label>
+              <input id="fixed-label" type="text" maxlength="80" autocomplete="off" placeholder="What it is, e.g. Support">
+              <label for="fixed-points" class="sr-only">Points</label>
+              <input id="fixed-points" type="number" min="0" max="100000" step="0.5" inputmode="decimal" placeholder="Points">
+              <button class="btn" type="submit" aria-label="Add fixed points">+ Add</button>
+            </form>
+          </section>
+
+          <section class="spill" aria-labelledby="h-spill">
+            <h2 id="h-spill">Spillover
+              <button type="button" class="info" data-tip="Work that did not finish and moves to the next sprint. Fill in 'Spillover out' at the end of a sprint; it appears as 'Spillover in' on the next one and comes off its capacity like fixed points." aria-label="About spillover">i</button>
+            </h2>
+            <div class="field">
+              <label for="spillIn">Spillover in <button type="button" class="info" data-tip="Points carried in from the previous sprint. Filled in automatically from its 'Spillover out'. Type a number to override it." aria-label="About spillover in">i</button></label>
+              <input id="spillIn" type="number" min="0" max="100000" step="0.5" inputmode="decimal">
+              <p id="spillIn-hint" class="hint"></p>
+              <button type="button" id="spill-auto" class="link" hidden>Use the previous sprint's number</button>
+            </div>
+            <div class="field">
+              <label for="spillOut">Spillover out <button type="button" class="info" data-tip="Points from this sprint that will not be finished. They move to the next sprint as 'Spillover in'." aria-label="About spillover out">i</button></label>
+              <input id="spillOut" type="number" min="0" max="100000" step="0.5" inputmode="decimal">
+            </div>
+          </section>
+        </div>
+      </div>
 
       <section class="people" aria-labelledby="h-team">
         <div class="people-head">
           <h2 id="h-team">Team and leave
-            <button type="button" class="info" data-tip="Everyone working in this sprint. Select a day in the grid to cycle it: working, off, or half day. Or paste a leave table from Excel." aria-label="About team and leave">i</button>
+            <button type="button" class="info" data-tip="Everyone on the team. Leave is stored by date, so it counts in every sprint. Paste your leave table from Excel, or use Edit days to mark leave for one person." aria-label="About team and leave">i</button>
           </h2>
           <button type="button" id="paste-open" class="btn primary">Paste leave from Excel</button>
         </div>
+
+        <p id="team-count" class="hint"></p>
 
         <form id="member-form" class="inline">
           <label for="member-name" class="sr-only">Person name</label>
@@ -122,12 +164,14 @@
           <button class="btn" type="submit">Add person</button>
         </form>
 
-        <div id="grid-wrap" class="grid-wrap"></div>
-        <ul class="key" aria-label="Grid key">
-          <li><span class="cell on"></span> Working</li>
-          <li><span class="cell half"></span> Half day</li>
-          <li><span class="cell off"></span> Off</li>
-        </ul>
+        <ul id="team-list" class="team"></ul>
+      </section>
+
+      <section id="overview-section" class="overview" aria-labelledby="h-overview" hidden>
+        <h2 id="h-overview">All sprints
+          <button type="button" class="info" data-tip="The last three sprints, the current one and the next three side by side. Active people are those with at least one available day in that sprint, so people who joined or left show up correctly. Select a row to open that sprint." aria-label="About all sprints">i</button>
+        </h2>
+        <div class="table-wrap"><table id="overview" class="ov"></table></div>
       </section>
     </div>
   </main>
@@ -147,7 +191,7 @@
   <dialog id="paste-dialog" aria-labelledby="paste-title">
     <form method="dialog" id="paste-form">
       <h2 id="paste-title">Paste leave from Excel</h2>
-      <p class="hint">Select the people and dates in Excel, copy, and paste here. Header rows, totals and sprint rows are skipped.</p>
+      <p class="hint">Select the people and dates in Excel, copy, and paste here. Header rows, totals and sprint rows are skipped. The dates you paste fill every sprint they fall in.</p>
       <label for="paste-text" class="sr-only">Pasted table</label>
       <textarea id="paste-text" rows="6" spellcheck="false" placeholder="Resource&#9;2-Nov&#9;3-Nov&#9;4-Nov&#10;Asha&#9;1&#9;0&#9;1"></textarea>
 
@@ -170,13 +214,16 @@
         <label class="check"><input type="checkbox" id="paste-blank" checked> Blank cells mean off
           <button type="button" class="info" data-tip="In your sheet an empty row means the person is not available. Untick if an empty cell should count as a working day." aria-label="About blank cells">i</button>
         </label>
+        <label class="check"><input type="checkbox" id="paste-others" checked> People not in this paste are off on these dates
+          <button type="button" class="info" data-tip="Use this when someone has left the team and is no longer in the newer sheet. They stay in the older sprints but stop counting in the dates you paste." aria-label="About people not in the paste">i</button>
+        </label>
       </div>
 
       <div id="paste-preview" class="preview" aria-live="polite"></div>
 
       <div class="dialog-actions">
         <button type="button" class="btn" id="paste-cancel">Cancel</button>
-        <button type="submit" class="btn primary" id="paste-apply" value="apply" disabled>Apply to sprint</button>
+        <button type="submit" class="btn primary" id="paste-apply" value="apply" disabled>Apply to team</button>
       </div>
     </form>
   </dialog>
@@ -185,7 +232,7 @@
   <dialog id="delete-dialog" aria-labelledby="delete-title">
     <form method="dialog">
       <h2 id="delete-title">Delete all data?</h2>
-      <p>This removes the sprint, team and leave for everyone in this room. It cannot be undone. Download a backup first if you may need it.</p>
+      <p>This removes every sprint, the team and leave for everyone in this room. It cannot be undone. Download a backup first if you may need it.</p>
       <div class="dialog-actions">
         <button type="button" class="btn" id="delete-cancel">Keep data</button>
         <button type="submit" class="btn danger-fill" id="delete-confirm" value="delete">Delete all data</button>

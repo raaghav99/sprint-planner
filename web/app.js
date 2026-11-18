@@ -1,9 +1,13 @@
 import { ROOM_ID, WORKER_URL } from './config.js';
 import { SyncClient } from './sync.js';
-import { computeCapacity, workingDays } from './capacity.js';
+import { workingDays } from './capacity.js';
 import { parseLeaveSheet } from './parser.js';
 import {
-  barSegments, clampField, cycleLeave, fmtDate, fmtNum, makeMember, mergeMembers, monthSpans, portionOn, sanitizeBackup,
+  capacityFor, currentSprint, overview, sprintDatesFor, sprintNumbers, spillInFor, DEFAULT_BASE,
+} from './sprints.js';
+import {
+  applyPaste, barSegments, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
+  portionOn, replaceSprints, sanitizeBackup, summarizeLeave,
 } from './view.js';
 
 const $ = (id) => document.getElementById(id);
@@ -11,19 +15,29 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 const DEFAULTS = {
   revision: 0, updatedAt: null, expiresAt: null,
-  sprintName: '', dateMode: 'range', startDate: '', endDate: '', numDays: 14,
+  sprintBase: { ...DEFAULT_BASE }, sprints: {},
   weekendDays: [0, 6], holidays: [], members: [],
-  pointsPerPersonDay: 1, fixedPoints: 0, bufferPct: 0,
+  pointsPerPersonDay: 1, bufferPct: 0,
 };
 
 const TIPS = {
   workingDays: 'Sprint days minus weekends and holidays. This is how many days each person could work with no leave.',
+  activeMembers: 'People with at least one available day in this sprint. Someone who joined later or has left is not counted in the sprints they were not on the team.',
   personDays: 'Working days added up across everyone, after taking off leave. Half days count as half.',
   gross: 'Person-days multiplied by points per person-day. This is the most the team could deliver.',
-  fixed: 'Points already committed before planning. They come off gross capacity first.',
-  buffer: 'The share of what remains (after fixed points) that you keep free for surprises.',
-  net: 'What is left for new stories: (gross capacity − fixed points) minus the buffer.',
+  fixed: 'All the fixed story points listed for this sprint added together. They come off gross capacity first.',
+  spill: 'Points carried in from the previous sprint. They come off gross capacity like fixed points.',
+  buffer: 'The share of what remains (after fixed points and spillover) that you keep free for surprises.',
+  net: 'What is left for new stories: (gross capacity − fixed points − spillover) minus the buffer.',
 };
+
+/** Today as YYYY-MM-DD. `?today=2026-11-18` pins it, for demos and tests. */
+function today() {
+  const pinned = new URLSearchParams(location.search).get('today');
+  if (pinned && /^\d{4}-\d{2}-\d{2}$/.test(pinned)) return pinned;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 const client = new SyncClient({
   url: `${WORKER_URL}/ws/${ROOM_ID}`,
@@ -32,7 +46,8 @@ const client = new SyncClient({
   onStatus: (status, info) => renderStatus(status, info),
 });
 
-let cap = computeCapacity(client.state);
+let selected = null; // sprint number on screen
+let expandedId = null; // person whose days are open
 
 // ---------------------------------------------------------------- tooltips
 const tooltip = $('tooltip');
@@ -78,24 +93,22 @@ window.addEventListener('scroll', () => {
 const info = (key, label) =>
   `<button type="button" class="info" data-tip="${esc(TIPS[key])}" aria-label="About ${esc(label)} result">i</button>`;
 
-// ---------------------------------------------------------------- inputs
-const TEXT_FIELDS = ['sprintName', 'startDate', 'endDate'];
-const NUM_FIELDS = ['numDays', 'pointsPerPersonDay', 'fixedPoints', 'bufferPct'];
+// ---------------------------------------------------------------- shared settings
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 $('weekend-days').innerHTML = DAY_NAMES.map((d, i) =>
   `<label><input type="checkbox" value="${i}" aria-label="${d} is a weekend day"><span>${d}</span></label>`).join('');
 
-for (const f of TEXT_FIELDS) $(f).addEventListener('input', (e) => client.update({ [f]: e.target.value }));
-for (const f of NUM_FIELDS) $(f).addEventListener('input', (e) => client.update({ [f]: clampField(f, e.target.value) }));
-for (const r of document.querySelectorAll('input[name="dateMode"]')) {
-  r.addEventListener('change', (e) => { if (e.target.checked) client.update({ dateMode: e.target.value }); });
-}
+const baseNow = () => ({ ...DEFAULT_BASE, ...client.state.sprintBase });
+$('anchorNumber').addEventListener('input', (e) => client.update({ sprintBase: { ...baseNow(), number: clampField('number', e.target.value) } }));
+$('anchorStart').addEventListener('input', (e) => client.update({ sprintBase: { ...baseNow(), startDate: e.target.value } }));
+$('anchorLength').addEventListener('input', (e) => client.update({ sprintBase: { ...baseNow(), length: clampField('length', e.target.value) } }));
+for (const f of ['pointsPerPersonDay', 'bufferPct']) $(f).addEventListener('input', (e) => client.update({ [f]: clampField(f, e.target.value) }));
+
 $('weekend-days').addEventListener('change', () => {
   const days = [...document.querySelectorAll('#weekend-days input:checked')].map((i) => Number(i.value));
   client.update({ weekendDays: days });
 });
-
 $('holiday-add').addEventListener('click', () => {
   const v = $('holiday-input').value;
   const list = client.state.holidays;
@@ -109,6 +122,48 @@ $('holiday-list').addEventListener('click', (e) => {
   if (b) client.update({ holidays: client.state.holidays.filter((d) => d !== b.dataset.date) });
 });
 
+// ---------------------------------------------------------------- one sprint's own data
+/** Save changes to one sprint. Only that sprint is sent, so other people's edits to other sprints stay. */
+function updateSprint(n, patch) {
+  const next = { ...(client.state.sprints?.[n] ?? {}), ...patch };
+  for (const k of ['startDate', 'endDate']) if (!next[k]) delete next[k];
+  client.update({ sprints: { [n]: next } });
+}
+const sprintCfg = (n) => client.state.sprints?.[n] ?? {};
+
+$('sprint-tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-n]');
+  if (b) { selected = Number(b.dataset.n); render(); }
+});
+$('overview').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-n]');
+  if (b) { selected = Number(b.dataset.n); render(); $('sprint-heading').scrollIntoView({ block: 'start' }); }
+});
+
+$('sprintStart').addEventListener('input', (e) => { if (e.target.value) updateSprint(selected, { startDate: e.target.value }); });
+$('sprintEnd').addEventListener('input', (e) => { if (e.target.value) updateSprint(selected, { endDate: e.target.value }); });
+$('dates-reset').addEventListener('click', () => updateSprint(selected, { startDate: '', endDate: '' }));
+
+$('fixed-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const points = clampField('points', $('fixed-points').value);
+  const items = sprintCfg(selected).fixedItems ?? [];
+  if (!(points > 0) || items.length >= 30) return;
+  updateSprint(selected, { fixedItems: [...items, makeFixedItem($('fixed-label').value || 'Fixed points', points)] });
+  $('fixed-label').value = '';
+  $('fixed-points').value = '';
+  $('fixed-label').focus();
+});
+$('fixed-list').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-id]');
+  if (b) updateSprint(selected, { fixedItems: (sprintCfg(selected).fixedItems ?? []).filter((i) => i.id !== b.dataset.id) });
+});
+
+$('spillOut').addEventListener('input', (e) => updateSprint(selected, { spillOut: clampField('spill', e.target.value) }));
+$('spillIn').addEventListener('input', (e) => updateSprint(selected, { spillIn: clampField('spill', e.target.value) }));
+$('spill-auto').addEventListener('click', () => updateSprint(selected, { spillIn: null }));
+
+// ---------------------------------------------------------------- team
 $('member-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const name = $('member-name').value.trim();
@@ -117,17 +172,32 @@ $('member-form').addEventListener('submit', (e) => {
   $('member-name').value = '';
 });
 
-$('grid-wrap').addEventListener('click', (e) => {
+const editMember = (id, fn) => client.update({ members: client.state.members.map((m) => (m.id === id ? fn(m) : m)) });
+
+$('team-list').addEventListener('click', (e) => {
   const cell = e.target.closest('button.cell');
-  if (cell) {
-    const { member, date } = cell.dataset;
-    client.update({
-      members: client.state.members.map((m) => (m.id === member ? { ...m, leave: cycleLeave(m.leave, date) } : m)),
-    });
-    return;
-  }
+  if (cell) { editMember(cell.dataset.member, (m) => ({ ...m, leave: cycleLeave(m.leave, cell.dataset.date) })); return; }
+  const edit = e.target.closest('button.edit');
+  if (edit) { expandedId = expandedId === edit.dataset.member ? null : edit.dataset.member; render(); return; }
   const rm = e.target.closest('button.rm');
-  if (rm) client.update({ members: client.state.members.filter((m) => m.id !== rm.dataset.member) });
+  if (rm) {
+    if (expandedId === rm.dataset.member) expandedId = null;
+    client.update({ members: client.state.members.filter((m) => m.id !== rm.dataset.member) });
+  }
+});
+$('team-list').addEventListener('input', (e) => {
+  const input = e.target.closest('input[data-prop]');
+  if (!input) return;
+  const { member, prop } = input.dataset;
+  editMember(member, (m) => {
+    const next = { ...m, [prop]: input.value };
+    if (!next[prop]) delete next[prop];
+    return next;
+  });
+});
+// While someone is typing a date in a person's panel, do not rebuild the list under them.
+$('team-list').addEventListener('focusout', (e) => {
+  if (e.target.matches?.('input[data-prop]')) setTimeout(() => render(), 0);
 });
 
 // ---------------------------------------------------------------- render
@@ -137,57 +207,88 @@ function setValue(el, value) {
 
 function render() {
   const s = client.state;
-  cap = computeCapacity(s);
+  const base = { ...DEFAULT_BASE, ...s.sprintBase };
+  const now = today();
 
-  for (const f of [...TEXT_FIELDS, ...NUM_FIELDS]) setValue($(f), s[f] ?? '');
-  for (const r of document.querySelectorAll('input[name="dateMode"]')) r.checked = r.value === s.dateMode;
-  $('field-end').hidden = s.dateMode === 'days';
-  $('field-days').hidden = s.dateMode !== 'days';
+  setValue($('anchorNumber'), base.number);
+  setValue($('anchorStart'), base.startDate);
+  setValue($('anchorLength'), base.length);
+  setValue($('pointsPerPersonDay'), s.pointsPerPersonDay ?? 1);
+  setValue($('bufferPct'), s.bufferPct ?? 0);
   for (const i of document.querySelectorAll('#weekend-days input')) i.checked = s.weekendDays.includes(Number(i.value));
-
   $('holiday-list').innerHTML = s.holidays.map((d) =>
     `<li>${esc(fmtDate(d, { year: true }))}<button type="button" data-date="${d}" aria-label="Remove holiday ${esc(fmtDate(d, { year: true }))}">×</button></li>`).join('');
 
-  renderSummary(s);
-  renderResults();
-  renderGrid(s);
+  const numbers = sprintNumbers(s, now);
+  const hasSprints = numbers.length > 0;
+  const current = currentSprint(s, now);
+  if (hasSprints && !numbers.includes(selected)) selected = current;
+
+  $('setup-note').hidden = hasSprints;
+  $('sprint-area').hidden = !hasSprints;
+  $('overview-section').hidden = !hasSprints;
+
+  const cap = hasSprints ? capacityFor(s, selected) : null;
+  if (hasSprints) {
+    renderTabs(s, numbers, current);
+    renderSprint(s, cap, current);
+    renderFixed(s);
+    renderSpill(s);
+    renderOverview(s, now);
+  }
+  renderTeam(s, cap);
   renderRetention(s);
 }
 
-function renderSummary(s) {
-  const r = cap.sprint;
-  $('date-summary').textContent = r.dates.length
-    ? `${fmtDate(r.start, { year: true })} to ${fmtDate(r.end, { year: true })}. ${r.numDays} calendar days, ${cap.workingDays} working.`
-    : s.dateMode === 'days' ? 'Pick a start date and a number of days.' : 'Pick a start date and an end date.';
+function renderTabs(s, numbers, current) {
+  $('sprint-tabs').innerHTML = numbers.map((n) => {
+    const w = sprintDatesFor(s, n);
+    const tag = n === current ? 'Current' : n < current ? 'Past' : 'Upcoming';
+    return `<button type="button" role="tab" class="tab${n === current ? ' now' : ''}" data-n="${n}" aria-selected="${n === selected}" tabindex="${n === selected ? 0 : -1}">` +
+      `<span class="tab-n">Sprint ${n}</span><span class="tab-d">${esc(fmtShort(w.start))} – ${esc(fmtShort(w.end))}</span><span class="tab-tag">${tag}</span></button>`;
+  }).join('');
 }
 
-function renderResults() {
+function renderSprint(s, cap, current) {
+  const r = cap.sprint;
+  const tag = selected === current ? 'current' : selected < current ? 'past' : 'upcoming';
+  $('sprint-heading').textContent = `Sprint ${selected} (${tag})`;
+  $('sprint-dates').textContent = `${fmtDate(r.start, { year: true })} to ${fmtDate(r.end, { year: true })}. ${r.numDays} calendar days, ${cap.workingDays} working.`;
+  setValue($('sprintStart'), r.start);
+  setValue($('sprintEnd'), r.end);
+  const custom = Boolean(sprintCfg(selected).startDate || sprintCfg(selected).endDate);
+  $('dates-reset').hidden = !custom;
+  document.querySelector('.override summary').textContent = custom ? 'Dates changed for this sprint' : 'Change this sprint\'s dates';
+
   $('net').textContent = fmtNum(cap.net);
   $('warnings').innerHTML = cap.warnings.map((w) => `<p class="warning">${esc(w)}</p>`).join('');
 
   const bar = $('bar');
   const segs = barSegments(cap);
   bar.classList.toggle('empty', segs.length === 0);
-  for (const key of ['fixed', 'buffer', 'net']) {
+  for (const key of ['fixed', 'spill', 'buffer', 'net']) {
     let el = bar.querySelector(`.seg.${key}`);
     if (!el) { el = document.createElement('div'); el.className = `seg ${key}`; bar.append(el); }
     const seg = segs.find((x) => x.key === key);
     el.hidden = !seg;
     el.style.flexGrow = seg ? String(seg.flex) : '0';
   }
-  bar.setAttribute('aria-label', `Gross capacity ${fmtNum(cap.gross)} points: ${fmtNum(cap.fixed)} fixed, ${fmtNum(cap.bufferPoints)} buffer, ${fmtNum(cap.net)} for new stories`);
+  bar.setAttribute('aria-label', `Gross capacity ${fmtNum(cap.gross)} points: ${fmtNum(cap.fixed)} fixed, ${fmtNum(cap.spill)} spillover, ${fmtNum(cap.bufferPoints)} buffer, ${fmtNum(cap.net)} for new stories`);
 
   $('bar-legend').innerHTML = [
-    ['fixed', 'var(--fixed)', 'Fixed', cap.fixed],
-    ['buffer', 'var(--buffer)', 'Buffer', cap.bufferPoints],
-    ['net', 'var(--net)', 'For new stories', cap.net],
-  ].map(([, color, label, v]) => `<li><i style="background:${color}"></i>${label} <b>${fmtNum(v)}</b></li>`).join('');
+    ['var(--fixed)', 'Fixed', cap.fixed],
+    ['var(--spill)', 'Spillover', cap.spill],
+    ['var(--buffer)', 'Buffer', cap.bufferPoints],
+    ['var(--net)', 'For new stories', cap.net],
+  ].map(([color, label, v]) => `<li><i style="background:${color}"></i>${label} <b>${fmtNum(v)}</b></li>`).join('');
 
   const rows = [
     ['workingDays', 'Working days', cap.workingDays],
+    ['activeMembers', 'Active people', cap.activeMembers],
     ['personDays', 'Person-days', cap.personDays],
     ['gross', 'Gross capacity', cap.gross],
     ['fixed', 'Fixed points', cap.fixed],
+    ['spill', 'Spillover in', cap.spill],
     ['buffer', `Buffer (${fmtNum(cap.bufferPct)}%)`, cap.bufferPoints],
     ['net', 'For new stories', cap.net],
   ];
@@ -195,43 +296,104 @@ function renderResults() {
     `<div><dt>${esc(label)} ${info(k, label)}</dt><dd data-k="${k}">${fmtNum(v)}</dd></div>`).join('');
 }
 
-function renderGrid(s) {
-  const wrap = $('grid-wrap');
-  const focused = document.activeElement?.closest?.('#grid-wrap') ? document.activeElement.dataset : null;
-  const days = workingDays(s);
+function renderFixed(s) {
+  const items = s.sprints?.[selected]?.fixedItems ?? [];
+  const total = items.reduce((a, i) => a + (Number(i.points) || 0), 0);
+  $('fixed-list').innerHTML = items.length
+    ? items.map((i) => `<li><span class="item-label">${esc(i.label || 'Fixed points')}</span><span class="item-points">${fmtNum(i.points)}</span><button type="button" class="rm" data-id="${esc(i.id)}" aria-label="Remove ${esc(i.label || 'fixed points')}">×</button></li>`).join('') +
+      `<li class="item-total"><span class="item-label">Total</span><span class="item-points">${fmtNum(total)}</span></li>`
+    : '<li class="empty-note">Nothing added yet. Add support, recurring work or committed items.</li>';
+}
 
-  if (!s.members.length) {
-    wrap.innerHTML = '<p class="empty-note">No one is in this sprint yet. Add a person above, or paste your leave table.</p>';
+function renderSpill(s) {
+  const own = s.sprints?.[selected]?.spillIn;
+  const overridden = own !== null && own !== undefined;
+  setValue($('spillIn'), spillInFor(s, selected));
+  setValue($('spillOut'), s.sprints?.[selected]?.spillOut ?? 0);
+  const prev = Number(s.sprints?.[selected - 1]?.spillOut) || 0;
+  $('spillIn-hint').textContent = selected <= 1 ? 'This is the first sprint.'
+    : overridden ? `Typed in. Sprint ${selected - 1} says ${fmtNum(prev)}.`
+      : `From Sprint ${selected - 1}'s spillover out.`;
+  $('spill-auto').hidden = !overridden;
+}
+
+function renderOverview(s, now) {
+  const rows = overview(s, now);
+  $('overview').innerHTML = `<thead><tr><th scope="col">Sprint</th><th scope="col">Dates</th><th scope="col" class="n">Active people</th><th scope="col" class="n">Gross</th><th scope="col" class="n">Fixed</th><th scope="col" class="n">Spillover in</th><th scope="col" class="n">For new stories</th></tr></thead><tbody>${
+    rows.map((r) => `<tr class="${r.number === selected ? 'sel' : ''}"><th scope="row"><button type="button" class="link" data-n="${r.number}">Sprint ${r.number}</button>${r.isCurrent ? ' <span class="pill">Current</span>' : ''}</th><td>${esc(fmtShort(r.start))} – ${esc(fmtShort(r.end))}</td><td class="n">${r.activeMembers}</td><td class="n">${fmtNum(r.gross)}</td><td class="n">${fmtNum(r.fixed)}</td><td class="n">${fmtNum(r.spillIn)}</td><td class="n strong">${fmtNum(r.net)}</td></tr>`).join('')
+  }</tbody>`;
+}
+
+function renderTeam(s, cap) {
+  const n = s.members.length;
+  $('team-count').textContent = !n ? 'No one on the team yet.'
+    : cap ? `${cap.activeMembers} active in Sprint ${selected}, ${n} ${n === 1 ? 'person' : 'people'} on the list.`
+      : `${n} ${n === 1 ? 'person' : 'people'} on the list.`;
+
+  const days = cap
+    ? workingDays({ dateMode: 'range', startDate: cap.sprint.start, endDate: cap.sprint.end, weekendDays: s.weekendDays, holidays: s.holidays })
+    : [];
+  const byId = new Map((cap?.members ?? []).map((m) => [m.id, m]));
+
+  // Someone is typing a date inside a person's panel: refresh the summary rows only, so the
+  // input keeps its focus and caret.
+  const ae = document.activeElement;
+  if (ae?.matches?.('#team-list input')) {
+    for (const li of $('team-list').querySelectorAll('li.person')) {
+      const m = s.members.find((x) => x.id === li.dataset.id);
+      const rowEl = li.querySelector('.person-row');
+      if (!m || !rowEl) continue;
+      const c = byId.get(m.id);
+      rowEl.outerHTML = personRow(m, c, days, expandedId === m.id);
+      li.classList.toggle('idle', Boolean(c && c.available === 0));
+    }
     return;
   }
-  const note = days.length ? '' : '<p class="empty-note">Set the sprint dates to see each person\'s days.</p>';
+  const focused = ae?.closest?.('#team-list') ? { ...ae.dataset } : null;
 
-  const byId = new Map(cap.members.map((m) => [m.id, m]));
-  const months = monthSpans(days);
-  const isWeekStart = (d, i) => i > 0 && new Date(`${d}T00:00:00Z`).getUTCDay() === 1;
-
-  const head1 = `<tr><th></th>${months.map((m) => `<th class="month" colspan="${m.span}">${m.label}</th>`).join('')}<th></th></tr>`;
-  const head2 = `<tr><th class="who"><span class="sr-only">Person</span></th>${days.map((d, i) => {
-    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
-    return `<th class="dh${isWeekStart(d, i) ? ' wk' : ''}" scope="col" title="${esc(fmtDate(d, { year: true }))}"><b>${Number(d.slice(8))}</b>${DAY_NAMES[dow].slice(0, 2)}</th>`;
-  }).join('')}<th class="total" scope="col">Days</th></tr>`;
-
-  const body = s.members.map((m) => {
-    const cells = days.map((d, i) => {
-      const p = portionOn(m.leave, d);
-      const state = p === 0 ? 'on' : p === 1 ? 'off' : 'half';
-      const label = p === 0 ? 'working' : p === 1 ? 'off' : 'half day';
-      return `<td class="${isWeekStart(d, i) ? 'wk' : ''}"><button type="button" class="cell ${state}" data-member="${esc(m.id)}" data-date="${d}" aria-label="${esc(m.name)}, ${esc(fmtDate(d))}: ${label}. Select to change." title="${esc(fmtDate(d))}: ${label}"></button></td>`;
-    }).join('');
-    const total = byId.get(m.id)?.available ?? 0;
-    return `<tr><th class="who" scope="row"><div class="who-inner"><span class="who-name" title="${esc(m.name)}">${esc(m.name)}</span><button type="button" class="rm" data-member="${esc(m.id)}" aria-label="Remove ${esc(m.name)}">×</button></div></th>${cells}<td class="total">${days.length ? fmtNum(total) : '–'}</td></tr>`;
-  }).join('');
-
-  wrap.innerHTML = `${note}<table class="grid"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>`;
+  $('team-list').innerHTML = s.members.length ? s.members.map((m) => {
+    const c = byId.get(m.id);
+    return `<li class="person${c && c.available === 0 ? ' idle' : ''}" data-id="${esc(m.id)}">` +
+      personRow(m, c, days, expandedId === m.id) + (expandedId === m.id ? personPanel(m, days) : '') + '</li>';
+  }).join('') : '<li class="empty-note">Add a person above, or paste your leave table.</li>';
 
   if (focused?.member && focused?.date) {
-    wrap.querySelector(`button.cell[data-member="${CSS.escape(focused.member)}"][data-date="${focused.date}"]`)?.focus();
+    $('team-list').querySelector(`button.cell[data-member="${CSS.escape(focused.member)}"][data-date="${focused.date}"]`)?.focus();
   }
+}
+
+function personRow(m, c, days, open) {
+  const leave = summarizeLeave(m.leave, days);
+  const chips = leave.slice(0, 4).map((l) => `<span class="chip ${l.portion === 1 ? 'off' : 'half'}">${esc(fmtDate(l.date))}${l.portion === 1 ? '' : ' half'}</span>`).join('') +
+    (leave.length > 4 ? `<span class="chip more">+${leave.length - 4} more</span>` : '');
+  let status = '';
+  if (c && c.activeDays === 0) status = 'Not on the team this sprint';
+  else if (c && c.available === 0) status = 'Off the whole sprint';
+  return `<div class="person-row"><span class="p-name" title="${esc(m.name)}">${esc(m.name)}</span>` +
+    (status ? `<span class="p-status">${status}</span>` : `<span class="p-chips">${chips || '<span class="p-none">No leave</span>'}</span>`) +
+    (c ? `<span class="p-days">${fmtNum(c.available)} days</span><span class="p-points">${fmtNum(c.points)} points</span>` : '') +
+    `<button type="button" class="link edit" data-member="${esc(m.id)}" aria-expanded="${open}" aria-label="Edit days for ${esc(m.name)}">${open ? 'Close' : 'Edit days'}</button>` +
+    `<button type="button" class="rm" data-member="${esc(m.id)}" aria-label="Remove ${esc(m.name)}">×</button></div>`;
+}
+
+function personPanel(m, days) {
+  const cells = days.map((d) => {
+    const p = portionOn(m.leave, d);
+    const state = p === 0 ? 'on' : p === 1 ? 'off' : 'half';
+    const label = p === 0 ? 'working' : p === 1 ? 'off' : 'half day';
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
+    return `<div class="dcell"><span class="dlab">${DAY_NAMES[dow].slice(0, 2)} ${Number(d.slice(8))}</span><button type="button" class="cell ${state}" data-member="${esc(m.id)}" data-date="${d}" aria-label="${esc(m.name)}, ${esc(fmtDate(d))}: ${label}. Select to change." title="${esc(fmtDate(d))}: ${label}"></button></div>`;
+  }).join('');
+  return `<div class="person-edit">` +
+    (days.length ? `<div class="dgrid" role="group" aria-label="Days for ${esc(m.name)}">${cells}</div>
+      <ul class="key" aria-label="Key"><li><span class="cell on"></span> Working</li><li><span class="cell half"></span> Half day</li><li><span class="cell off"></span> Off</li></ul>`
+      : '<p class="hint">Set the current sprint to edit days.</p>') +
+    `<div class="joined">
+      <label>Joined <button type="button" class="info" data-tip="The first day this person is on the team. Leave empty if they were here before the sprints you look at. Earlier sprints will not count them." aria-label="About joined date">i</button>
+        <input type="date" data-member="${esc(m.id)}" data-prop="from" value="${esc(m.from ?? '')}" aria-label="Joined ${esc(m.name)}"></label>
+      <label>Last day <button type="button" class="info" data-tip="The last day this person is on the team. Leave empty if they are still here. Later sprints will not count them." aria-label="About last day">i</button>
+        <input type="date" data-member="${esc(m.id)}" data-prop="until" value="${esc(m.until ?? '')}" aria-label="Last day of ${esc(m.name)}"></label>
+    </div></div>`;
 }
 
 function renderRetention(s) {
@@ -266,9 +428,8 @@ function notice(text, isError = false) {
 
 // ---------------------------------------------------------------- backup
 $('export').addEventListener('click', () => {
-  const fields = Object.fromEntries(Object.entries(client.state).filter(([k]) =>
-    ['sprintName', 'dateMode', 'startDate', 'endDate', 'numDays', 'weekendDays', 'holidays', 'members', 'pointsPerPersonDay', 'fixedPoints', 'bufferPct'].includes(k)));
-  const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), fields }, null, 2)], { type: 'application/json' });
+  const fields = Object.fromEntries(Object.entries(client.state).filter(([k]) => FIELD_KEYS.includes(k)));
+  const blob = new Blob([JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), fields }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `sprint-planner-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -284,6 +445,7 @@ $('import-file').addEventListener('change', async (e) => {
   try {
     const fields = sanitizeBackup(JSON.parse(await file.text()));
     if (!fields) throw new Error('not a backup');
+    if (fields.sprints) fields.sprints = replaceSprints(client.state.sprints, fields.sprints);
     client.update(fields);
     notice('Backup restored.');
   } catch {
@@ -303,11 +465,11 @@ deleteDialog.addEventListener('close', () => {
 
 // ---------------------------------------------------------------- paste
 const pasteDialog = $('paste-dialog');
-let pasted = null; // { parsed, hints }
+let pasted = null; // { members, newHints }
 
 $('paste-open').addEventListener('click', () => { pasteDialog.showModal(); $('paste-text').focus(); previewPaste(); });
 $('paste-cancel').addEventListener('click', () => pasteDialog.close());
-for (const id of ['paste-text', 'paste-convention', 'paste-order', 'paste-blank']) {
+for (const id of ['paste-text', 'paste-convention', 'paste-order', 'paste-blank', 'paste-others']) {
   $(id).addEventListener(id === 'paste-text' ? 'input' : 'change', previewPaste);
 }
 
@@ -320,63 +482,77 @@ function previewPaste() {
   apply.disabled = true;
   if (!text.trim()) { out.innerHTML = ''; return; }
 
-  const haveDates = cap.sprint.dates.length > 0;
+  const anchor = { ...DEFAULT_BASE, ...s.sprintBase };
   const parsed = parseLeaveSheet(text, {
-    sprintStart: haveDates ? cap.sprint.start : undefined,
-    sprintEnd: haveDates ? cap.sprint.end : undefined,
+    yearHint: Number((anchor.startDate || today()).slice(0, 4)),
     weekendDays: s.weekendDays,
     convention: $('paste-convention').value,
     order: $('paste-order').value,
     blankAsOff: $('paste-blank').checked,
   });
 
-  const msgs = [];
   if (parsed.layout === 'unknown') {
     out.innerHTML = parsed.errors.map((e) => `<p class="msg err">${esc(e.message)}</p>`).join('');
     return;
   }
 
-  const newHints = parsed.holidayHints.filter((d) => !s.holidays.includes(d));
-  const members = mergeMembers(s.members, parsed.members);
+  const markOthersOff = $('paste-others').checked;
+  const members = applyPaste(s.members, parsed, { markOthersOff });
   if (members.length > 100) {
-    out.innerHTML = '<p class="msg err">That is more than 100 people. Paste fewer rows.</p>';
+    out.innerHTML = '<p class="msg err">That would be more than 100 people. Remove some people first.</p>';
     return;
   }
+  const newHints = parsed.holidayHints.filter((d) => !s.holidays.includes(d));
   const keepHints = () => (document.getElementById('paste-hint')?.checked ?? true);
-  const preview = computeCapacity({ ...s, holidays: [...new Set([...s.holidays, ...(newHints.length && keepHints() ? newHints : [])])], members });
+  const holidays = [...new Set([...s.holidays, ...(newHints.length && keepHints() ? newHints : [])])].sort();
+  const next = { ...s, members, holidays };
+  const hasSprints = sprintNumbers(next, today()).length > 0;
+  const cap = hasSprints ? capacityFor(next, selected) : null;
 
-  const read = parsed.layout === 'matrix'
-    ? `Read ${members.length} people and ${parsed.columns.length} date columns (${parsed.columns.length - parsed.outsideColumns.length} inside this sprint). Cells read as ${parsed.convention === 'availability' ? 'availability: 1 working, 0 off' : 'leave: a mark means away'}.`
-    : `Read ${members.length} people from a list of leave dates.`;
-  msgs.push(`<p class="msg">${esc(read)}</p>`);
-  if (!haveDates) msgs.push('<p class="msg warn">Set the sprint dates first so only this sprint\'s columns are used.</p>');
+  const names = new Set(parsed.members.map((p) => p.name.trim().toLowerCase()));
+  const others = s.members.filter((m) => !names.has(m.name.trim().toLowerCase()));
+  const msgs = [];
+  const range = parsed.columns.length ? `${fmtDate(parsed.columns[0], { year: true })} to ${fmtDate(parsed.columns[parsed.columns.length - 1], { year: true })}` : '';
+  msgs.push(`<p class="msg">${esc(parsed.layout === 'matrix'
+    ? `Read ${parsed.members.length} people and ${parsed.columns.length} date columns (${range}). Cells read as ${parsed.convention === 'availability' ? 'availability: 1 working, 0 off' : 'leave: a mark means away'}.`
+    : `Read ${parsed.members.length} people from a list of leave dates.`)}</p>`);
+  if (others.length) {
+    msgs.push(`<p class="msg">${others.length} ${others.length === 1 ? 'person on your list is' : 'people on your list are'} not in this paste (${esc(others.map((o) => o.name).join(', '))}). ${markOthersOff ? 'They keep their history and are off on these dates.' : 'They keep their leave as it is.'}</p>`);
+  }
+  if (!hasSprints) msgs.push('<p class="msg warn">Set the current sprint first to see availability per sprint. The leave is still saved.</p>');
   for (const w of parsed.warnings) msgs.push(`<p class="msg warn">${esc(w)}</p>`);
   for (const e of parsed.errors.slice(0, 5)) msgs.push(`<p class="msg err">${e.row ? `Row ${e.row}: ` : ''}${esc(e.message)}</p>`);
   if (parsed.errors.length > 5) msgs.push(`<p class="msg err">${parsed.errors.length - 5} more problems not shown.</p>`);
   if (newHints.length) {
     msgs.push(`<label class="holiday"><input type="checkbox" id="paste-hint" ${keepHints() ? 'checked' : ''}> Everyone is off on ${esc(newHints.map((d) => fmtDate(d)).join(', '))}. Add as holidays.</label>`);
   }
-  const rows = preview.members.map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${fmtNum(m.leaveDays)}</td><td class="n">${fmtNum(m.available)}</td></tr>`).join('');
-  msgs.push(`<div class="scroll"><table><thead><tr><th>Person</th><th class="n">Leave days</th><th class="n">Available</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  if (cap) {
+    const rows = cap.members.filter((m) => names.has(m.name.trim().toLowerCase())).map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${fmtNum(m.leaveDays)}</td><td class="n">${fmtNum(m.available)}</td></tr>`).join('');
+    msgs.push(`<div class="scroll"><table><thead><tr><th>Person</th><th class="n">Leave in Sprint ${selected}</th><th class="n">Available</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  } else {
+    msgs.push(`<div class="scroll"><table><thead><tr><th>Person</th><th class="n">Leave days</th></tr></thead><tbody>${members.filter((m) => names.has(m.name.trim().toLowerCase())).map((m) => `<tr><td>${esc(m.name)}</td><td class="n">${fmtNum(m.leave.reduce((a, l) => a + l.portion, 0))}</td></tr>`).join('')}</tbody></table></div>`);
+  }
 
   out.innerHTML = msgs.join('');
   $('paste-hint')?.addEventListener('change', previewPaste);
-  pasted = { members, newHints };
-  apply.disabled = members.length === 0;
+  pasted = { members, holidays, newHints };
+  apply.disabled = parsed.members.length === 0;
 }
 
 $('paste-form').addEventListener('submit', (e) => {
   if (e.submitter?.value !== 'apply' || !pasted) { e.preventDefault(); return; }
   const fields = { members: pasted.members };
-  if (pasted.newHints.length && $('paste-hint')?.checked) {
-    fields.holidays = [...new Set([...client.state.holidays, ...pasted.newHints])].sort();
-  }
+  if (pasted.newHints.length && $('paste-hint')?.checked) fields.holidays = pasted.holidays;
   client.update(fields);
   $('paste-text').value = '';
   $('paste-preview').innerHTML = '';
   pasted = null;
-  notice('Leave applied to the sprint.');
+  notice('Leave applied to the team.');
 });
+
+// Do not lose an edit made just before the tab is closed or hidden.
+window.addEventListener('pagehide', () => client.flushNow());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') client.flushNow(); });
 
 // ---------------------------------------------------------------- start
 $('room-name').textContent = ROOM_ID;

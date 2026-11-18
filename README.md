@@ -1,6 +1,6 @@
 # Sprint Planner
 
-A shared sprint capacity planner. Set the sprint dates, add fixed story points and a buffer %, paste the team's leave table from Excel, and get the capacity left for new stories. Edits autosave and sync live for everyone in the room. Data is deleted 3 months after the last edit.
+A shared sprint capacity planner. Set one anchor sprint (number, start date, length) and it shows the last 3, the current and the next 3 sprints, each with its own fixed story points, spillover and capacity. Paste the team's leave table from Excel. Edits autosave and sync live. Data is deleted 3 months after the last edit.
 
 - **UI:** static site in `web/` (GitHub Pages, no build step)
 - **Backend:** Cloudflare Worker + one Durable Object in `worker/` (room `playwright`)
@@ -8,15 +8,19 @@ A shared sprint capacity planner. Set the sprint dates, add fixed story points a
 ## How capacity is calculated
 
 ```
+sprint n     = anchor start + (n - anchor number) x length   // dates auto-generated, can be overridden per sprint
 working days = sprint days - weekends - holidays
-person-days  = sum over people of (working days - leave)
+person-days  = sum over active people of (days on the team - leave)
 gross        = person-days x points per person-day
-net          = (gross - fixed points) x (1 - buffer %)     // floored at 0
+net          = (gross - fixed points - spillover in) x (1 - buffer %)   // floored at 0
+spillover in = typed value, or the previous sprint's spillover out
 ```
+
+People have optional Joined and Last day dates, so someone who left only counts in the sprints they were on the team. The active people count per sprint comes from this.
 
 ## Pasting leave from Excel
 
-Select the people and dates in Excel (the `Resource | 2-Nov | 3-Nov ...` block), copy, and paste in the dialog. Cells are read as availability: `1` working, `0.5` half day, `0` off, blank = off. Header, `Total` and `Sprint Capacity` rows are skipped, only dates inside the sprint are used, and days where everyone is off are offered as holidays. A plain `Name | Date | Half/Full` list also works.
+One paste can cover several sprints; leave is stored by date. People on your list who are not in the paste can be marked off for the pasted dates (checkbox). Select the people and dates in Excel (the `Resource | 2-Nov | 3-Nov ...` block), copy, and paste in the dialog. Cells are read as availability: `1` working, `0.5` half day, `0` off, blank = off. Header, `Total` and `Sprint Capacity` rows are skipped, and days where everyone is off are offered as holidays. A plain `Name | Date | Half/Full` list also works.
 
 ## Run locally
 

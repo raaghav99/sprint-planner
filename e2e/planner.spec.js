@@ -3,9 +3,12 @@ import fs from 'node:fs';
 
 const fixture = fs.readFileSync(new URL('../test/fixtures/nov26-sheet.tsv', import.meta.url), 'utf8');
 
+// Pin "today" so the current sprint is predictable: 18 Nov 2026 is inside Sprint 14 (9 to 22 Nov).
+const APP = '/?today=2026-11-18';
+
 /** Wipe the shared room from inside the page, so the Origin header is the allowed localhost:8080. */
 async function resetRoom(page) {
-  await page.goto('/');
+  await page.goto(APP);
   await page.evaluate(() => new Promise((resolve, reject) => {
     const ws = new WebSocket('ws://localhost:8787/ws/playwright');
     ws.onopen = () => ws.send(JSON.stringify({ type: 'clear' }));
@@ -17,90 +20,323 @@ async function resetRoom(page) {
 }
 
 const dd = (page, key) => page.locator(`dd[data-k="${key}"]`);
+const tab = (page, n) => page.getByRole('tab', { name: new RegExp(`Sprint ${n}\\b`) });
 
-async function setSprint(page, start = '2026-11-02', end = '2026-11-13') {
-  await page.fill('#startDate', start);
-  await page.fill('#endDate', end);
+async function setAnchor(page, { number = 14, start = '2026-11-09', length = 14 } = {}) {
+  await page.fill('#anchorNumber', String(number));
+  await page.fill('#anchorStart', start);
+  await page.fill('#anchorLength', String(length));
+  await expect(page.locator('#sprint-tabs')).toBeVisible();
 }
 async function addPerson(page, name) {
   await page.fill('#member-name', name);
   await page.getByRole('button', { name: 'Add person' }).click();
 }
+async function addFixed(page, label, points) {
+  await page.fill('#fixed-label', label);
+  await page.fill('#fixed-points', String(points));
+  await page.getByRole('button', { name: 'Add fixed points' }).click();
+}
+const row = (page, name) => page.locator('#team-list li.person', { hasText: name });
 
 test.beforeEach(async ({ page }) => { await resetRoom(page); });
 
+// ------------------------------------------------------------------ sprints
+test('asks for the current sprint first, but the team can already be added', async ({ page }) => {
+  await expect(page.locator('#setup-note')).toBeVisible();
+  await expect(page.locator('#sprint-area')).toBeHidden();
+  await addPerson(page, 'Asha');
+  await expect(row(page, 'Asha')).toBeVisible();
+});
+
+test('one anchor sprint gives the last three, the current and the next three', async ({ page }) => {
+  await setAnchor(page);
+  await expect(page.getByRole('tab')).toHaveCount(7);
+  for (const n of [11, 12, 13, 14, 15, 16, 17]) await expect(tab(page, n)).toBeVisible();
+  await expect(tab(page, 14)).toContainText('Current');
+  await expect(tab(page, 14)).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, 11)).toContainText('Past');
+  await expect(tab(page, 17)).toContainText('Upcoming');
+  await expect(page.locator('#sprint-dates')).toContainText('Mon 9 Nov 2026 to Sun 22 Nov 2026');
+  await expect(tab(page, 15)).toContainText('23 Nov – 6 Dec');
+});
+
+test('the current sprint follows today without any edits', async ({ page }) => {
+  await setAnchor(page);
+  await expect(page.locator('#sync-status')).toContainText('Saved');
+  await page.goto('/?today=2026-11-25');
+  await expect(page.getByRole('tab')).toHaveCount(7);
+  await expect(tab(page, 15)).toContainText('Current');
+  await expect(tab(page, 12)).toBeVisible();
+  await expect(tab(page, 18)).toBeVisible();
+  await expect(page.locator('#sprint-heading')).toContainText('Sprint 15 (current)');
+});
+
+test('past and upcoming sprints can be opened and edited', async ({ page }) => {
+  await setAnchor(page);
+  await tab(page, 12).click();
+  await expect(page.locator('#sprint-heading')).toContainText('Sprint 12 (past)');
+  await expect(page.locator('#sprint-dates')).toContainText('Mon 12 Oct 2026 to Sun 25 Oct 2026');
+  await tab(page, 17).click();
+  await expect(page.locator('#sprint-heading')).toContainText('Sprint 17 (upcoming)');
+  await addFixed(page, 'Release', 6);
+  await expect(page.locator('#fixed-list')).toContainText('Release');
+  await tab(page, 14).click();
+  await expect(page.locator('#fixed-list')).not.toContainText('Release'); // other sprints untouched
+  await expect(page.locator('#sync-status')).toContainText('Saved');
+  await page.reload();
+  await tab(page, 17).click();
+  await expect(page.locator('#fixed-list')).toContainText('Release');
+});
+
+test('one sprint can have its own start and end dates', async ({ page }) => {
+  await setAnchor(page);
+  await tab(page, 15).click();
+  await page.getByText("Change this sprint's dates").click();
+  await page.fill('#sprintEnd', '2026-12-11');
+  await expect(page.locator('#sprint-dates')).toContainText('Fri 11 Dec 2026');
+  await expect(page.locator('#sprint-dates')).toContainText('19 calendar days');
+  await tab(page, 14).click();
+  await expect(page.locator('#sprint-dates')).toContainText('Sun 22 Nov 2026'); // others not affected
+  await tab(page, 15).click();
+  await expect(page.getByText('Dates changed for this sprint')).toBeVisible();
+  await page.getByRole('button', { name: 'Use automatic dates' }).click();
+  await expect(page.locator('#sprint-dates')).toContainText('Sun 6 Dec 2026');
+});
+
+test('overview lists all seven sprints and opens one when selected', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await expect(page.locator('#overview tbody tr')).toHaveCount(7);
+  const r14 = page.locator('#overview tbody tr', { hasText: 'Sprint 14' });
+  await expect(r14).toContainText('Current');
+  await expect(r14.locator('td').nth(1)).toHaveText('1'); // active people
+  await page.locator('#overview').getByRole('button', { name: 'Sprint 16' }).click();
+  await expect(page.locator('#sprint-heading')).toContainText('Sprint 16');
+});
+
+// ------------------------------------------------------------------ capacity
 test('calculates capacity from dates, people, fixed points and buffer', async ({ page }) => {
-  await setSprint(page);
+  await setAnchor(page);
   await addPerson(page, 'Asha');
   await addPerson(page, 'Ben');
-  await page.fill('#fixedPoints', '4');
+  await addFixed(page, 'Support', 4);
   await page.fill('#bufferPct', '10');
   await expect(dd(page, 'workingDays')).toHaveText('10');
+  await expect(dd(page, 'activeMembers')).toHaveText('2');
   await expect(dd(page, 'personDays')).toHaveText('20');
   await expect(dd(page, 'gross')).toHaveText('20');
   await expect(page.locator('#net')).toHaveText('14.4');
-  await expect(page.locator('#date-summary')).toContainText('12 calendar days, 10 working');
 });
 
-test('sprint can be set by number of days instead of end date', async ({ page }) => {
-  await page.fill('#startDate', '2026-11-02');
-  await page.getByLabel('Number of days', { exact: true }).check();
-  await expect(page.locator('#field-end')).toBeHidden();
-  await page.fill('#numDays', '14');
-  await expect(page.locator('#date-summary')).toContainText('Sun 15 Nov 2026');
-  await expect(dd(page, 'workingDays')).toHaveText('10');
-});
-
-test('weekend days and holidays change working days', async ({ page }) => {
-  await setSprint(page);
-  await page.fill('#holiday-input', '2026-11-09');
+test('holidays and weekend days change working days', async ({ page }) => {
+  await setAnchor(page);
+  await page.fill('#holiday-input', '2026-11-12');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(dd(page, 'workingDays')).toHaveText('9');
   await page.getByRole('button', { name: /Remove holiday/ }).click();
   await expect(dd(page, 'workingDays')).toHaveText('10');
   await page.locator('#weekend-days label', { hasText: 'Sun' }).click(); // Sunday now works
-  await expect(dd(page, 'workingDays')).toHaveText('11');
+  await expect(dd(page, 'workingDays')).toHaveText('12');
 });
 
-test('clicking a grid cell cycles working, off, half day and updates capacity', async ({ page }) => {
-  await setSprint(page, '2026-11-02', '2026-11-06');
+test('warns when fixed points and spillover exceed capacity', async ({ page }) => {
+  await setAnchor(page);
   await addPerson(page, 'Asha');
-  const cell = page.getByRole('button', { name: /Asha, Tue 3 Nov/ });
-  await expect(cell).toHaveAttribute('aria-label', /working/);
-  await cell.click();
-  await expect(cell).toHaveAttribute('aria-label', /off/);
-  await expect(dd(page, 'personDays')).toHaveText('4');
-  await cell.click();
-  await expect(cell).toHaveAttribute('aria-label', /half day/);
-  await expect(dd(page, 'personDays')).toHaveText('4.5');
-  await cell.click();
-  await expect(dd(page, 'personDays')).toHaveText('5');
+  await addFixed(page, 'Big', 50);
+  await expect(page.locator('.warning')).toContainText('exceed gross capacity (10)');
+  await expect(page.locator('#net')).toHaveText('0');
+});
+
+// ------------------------------------------------------------------ fixed points
+test('fixed story points can be added one after another and removed', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await addFixed(page, 'Support', 3);
+  await addFixed(page, 'Bug bash', 2.5);
+  await expect(page.locator('#fixed-list li')).toHaveCount(3); // two items plus the total line
+  await expect(page.locator('#fixed-list .item-total')).toContainText('5.5');
+  await expect(dd(page, 'fixed')).toHaveText('5.5');
+  await page.getByRole('button', { name: 'Remove Support' }).click();
+  await expect(dd(page, 'fixed')).toHaveText('2.5');
+  await expect(page.locator('#fixed-list')).not.toContainText('Support');
+});
+
+test('an item with no points is not added, and a blank label gets a default name', async ({ page }) => {
+  await setAnchor(page);
+  await page.fill('#fixed-label', 'Zzz');
+  await page.getByRole('button', { name: 'Add fixed points' }).click();
+  await expect(page.locator('#fixed-list')).not.toContainText('Zzz');
+  await page.fill('#fixed-label', '');
+  await page.fill('#fixed-points', '4');
+  await page.getByRole('button', { name: 'Add fixed points' }).click();
+  await expect(page.locator('#fixed-list')).toContainText('Fixed points');
+});
+
+// ------------------------------------------------------------------ spillover
+test('spillover out becomes spillover in on the next sprint, and can be overridden', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await page.fill('#spillOut', '5');
+  await tab(page, 15).click();
+  await expect(page.locator('#spillIn')).toHaveValue('5');
+  await expect(page.locator('#spillIn-hint')).toContainText("From Sprint 14's spillover out");
+  await expect(dd(page, 'spill')).toHaveText('5');
+  await expect(page.locator('#spill-auto')).toBeHidden();
+
+  await page.fill('#spillIn', '1');
+  await expect(dd(page, 'spill')).toHaveText('1');
+  await expect(page.locator('#spillIn-hint')).toContainText('Typed in');
+  await expect(page.locator('#spill-auto')).toBeVisible();
+
+  await page.locator('#spill-auto').click();
+  await expect(dd(page, 'spill')).toHaveText('5');
+  await expect(page.locator('#spill-auto')).toBeHidden();
+});
+
+test('spillover comes off capacity before the buffer', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await addPerson(page, 'Ben'); // 20 gross in a 10 day sprint
+  await page.fill('#spillOut', '6');
+  await page.fill('#bufferPct', '10');
+  await tab(page, 15).click(); // 23 Nov to 6 Dec: 10 working days
+  await expect(dd(page, 'gross')).toHaveText('20');
+  await addFixed(page, 'Support', 4);
+  await expect(page.locator('#net')).toHaveText('9'); // (20 - 4 - 6) x 0.9
+});
+
+// ------------------------------------------------------------------ team
+test('people who joined or left only count in the sprints they were on the team', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await addPerson(page, 'Ben');
+  await row(page, 'Ben').getByRole('button', { name: /Edit days for Ben/ }).click();
+  await page.getByLabel('Last day of Ben').fill('2026-11-08');
+  await expect(dd(page, 'activeMembers')).toHaveText('1'); // sprint 14: Ben has left
+  await expect(page.locator('#team-count')).toContainText('1 active in Sprint 14');
+  await expect(row(page, 'Ben')).toContainText('Not on the team this sprint');
+  await tab(page, 13).click();
+  await expect(dd(page, 'activeMembers')).toHaveText('2'); // sprint 13 (26 Oct to 8 Nov): both there
+  const r14 = page.locator('#overview tbody tr', { hasText: 'Sprint 14' });
+  await expect(r14.locator('td').nth(1)).toHaveText('1');
+  const r13 = page.locator('#overview tbody tr', { hasText: 'Sprint 13' });
+  await expect(r13.locator('td').nth(1)).toHaveText('2');
+});
+
+test('a person who joins later is not counted before their first day', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await addPerson(page, 'Cy');
+  await row(page, 'Cy').getByRole('button', { name: /Edit days for Cy/ }).click();
+  await page.getByLabel('Joined Cy').fill('2026-11-23');
+  await expect(dd(page, 'activeMembers')).toHaveText('1'); // sprint 14
+  await tab(page, 15).click();
+  await expect(dd(page, 'activeMembers')).toHaveText('2'); // sprint 15 starts 23 Nov
+});
+
+test('the team shows a compact summary, with days only when you open a person', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await expect(page.locator('#team-list button.cell')).toHaveCount(0); // no full calendar by default
+  await expect(row(page, 'Asha')).toContainText('10 days');
+  await expect(row(page, 'Asha')).toContainText('No leave');
+
+  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click();
+  await expect(page.locator('#team-list button.cell')).toHaveCount(10);
+  await page.getByRole('button', { name: /Asha, Tue 10 Nov/ }).click();
+  await expect(row(page, 'Asha')).toContainText('9 days');
+  await expect(row(page, 'Asha').locator('.chip')).toContainText('Tue 10 Nov');
+  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click();
+  await page.getByRole('button', { name: /Asha, Wed 11 Nov/ }).click(); // working -> off -> half
+  await expect(row(page, 'Asha')).toContainText('8.5 days');
+  await expect(row(page, 'Asha').locator('.chip.half')).toContainText('Wed 11 Nov');
+
+  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click(); // closes
+  await expect(page.locator('#team-list button.cell')).toHaveCount(0);
+  await expect(row(page, 'Asha')).toContainText('8.5 days');
+});
+
+test('a person with lots of leave shows the first few days and a count of the rest', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click();
+  for (const d of ['Mon 9', 'Tue 10', 'Wed 11', 'Thu 12', 'Fri 13', 'Mon 16']) {
+    await page.getByRole('button', { name: new RegExp(`Asha, ${d} Nov`) }).click();
+  }
+  await expect(row(page, 'Asha').locator('.chip')).toHaveCount(5); // four shown plus "+2 more"
+  await expect(row(page, 'Asha')).toContainText('+2 more');
 });
 
 test('grid cells work from the keyboard and keep focus', async ({ page }) => {
-  await setSprint(page, '2026-11-02', '2026-11-06');
+  await setAnchor(page);
   await addPerson(page, 'Asha');
-  const cell = page.getByRole('button', { name: /Asha, Wed 4 Nov/ });
+  await row(page, 'Asha').getByRole('button', { name: /Edit days for Asha/ }).click();
+  const cell = page.getByRole('button', { name: /Asha, Wed 11 Nov/ });
   await cell.focus();
   await page.keyboard.press('Enter');
-  await expect(dd(page, 'personDays')).toHaveText('4');
+  await expect(dd(page, 'personDays')).toHaveText('9');
   await expect(cell).toBeFocused();
 });
 
+test('a person can be removed', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await page.getByRole('button', { name: 'Remove Asha' }).click();
+  await expect(row(page, 'Asha')).toHaveCount(0);
+  await expect(dd(page, 'activeMembers')).toHaveText('0');
+});
+
+// ------------------------------------------------------------------ paste
 test('pasting the Excel leave sheet fills people and leave, and offers holidays', async ({ page }) => {
-  await setSprint(page, '2026-11-09', '2026-11-20');
+  await setAnchor(page);
   await page.getByRole('button', { name: 'Paste leave from Excel' }).click();
   await page.fill('#paste-text', fixture);
-  await expect(page.locator('#paste-preview')).toContainText('8 people and 22 date columns (10 inside this sprint)');
+  await expect(page.locator('#paste-preview')).toContainText('8 people and 22 date columns');
   await expect(page.locator('#paste-preview')).toContainText('Everyone is off on Mon 9 Nov, Tue 10 Nov');
   await expect(page.locator('#paste-hint')).toBeChecked();
-  await expect(page.locator('#paste-preview tbody tr')).toHaveCount(8);
   await page.locator('#paste-apply').click();
   await expect(page.locator('#paste-dialog')).not.toBeVisible();
+  await expect(page.locator('#holiday-list')).toContainText('Mon 9 Nov 2026');
   await expect(dd(page, 'workingDays')).toHaveText('8');
   await expect(dd(page, 'personDays')).toHaveText('43');
-  await expect(page.locator('#holiday-list')).toContainText('Mon 9 Nov 2026'); // holiday chip
-  await expect(page.locator('tbody tr')).toHaveCount(8);
+  await expect(dd(page, 'activeMembers')).toHaveText('7'); // one person is off the whole sprint
+  await expect(page.locator('#team-list li.person')).toHaveCount(8);
+});
+
+test('pasting keeps people who are not in the sheet, off for the pasted dates', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Zed');
+  await page.getByRole('button', { name: 'Paste leave from Excel' }).click();
+  await page.fill('#paste-text', fixture);
+  await expect(page.locator('#paste-preview')).toContainText('Zed');
+  await expect(page.locator('#paste-preview')).toContainText('keep their history and are off on these dates');
+  await page.locator('#paste-apply').click();
+  await expect(row(page, 'Zed')).toHaveCount(1);
+  await expect(row(page, 'Zed')).toContainText('Off the whole sprint');
+  await expect(page.locator('#team-list li.person')).toHaveCount(9);
+});
+
+test('pasting can leave people who are not in the sheet untouched', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Zed');
+  await page.getByRole('button', { name: 'Paste leave from Excel' }).click();
+  await page.fill('#paste-text', fixture);
+  await page.locator('#paste-others').uncheck();
+  await expect(page.locator('#paste-preview')).toContainText('keep their leave as it is');
+  await page.locator('#paste-apply').click();
+  await expect(row(page, 'Zed')).toContainText('8 days'); // not turned off (only the holidays come off)
+  await expect(row(page, 'Zed')).not.toContainText('Off the whole sprint');
+});
+
+test('pasting works before the current sprint is set, and the leave is kept', async ({ page }) => {
+  await page.getByRole('button', { name: 'Paste leave from Excel' }).click();
+  await page.fill('#paste-text', fixture);
+  await expect(page.locator('#paste-preview')).toContainText('Set the current sprint first');
+  await page.locator('#paste-apply').click();
+  await expect(page.locator('#team-list li.person')).toHaveCount(8);
+  await setAnchor(page);
+  await expect(dd(page, 'personDays')).toHaveText('43'); // pasted leave and holidays were kept
 });
 
 test('paste preview shows problems and blocks apply for unreadable input', async ({ page }) => {
@@ -112,7 +348,9 @@ test('paste preview shows problems and blocks apply for unreadable input', async
   await expect(page.locator('#paste-preview')).toBeEmpty();
 });
 
+// ------------------------------------------------------------------ info icons
 test('info icons explain each field on hover, focus and tap', async ({ page }) => {
+  await setAnchor(page);
   const icon = page.getByRole('button', { name: 'About fixed points', exact: true });
   await icon.hover();
   await expect(page.locator('#tooltip')).toBeVisible();
@@ -130,33 +368,49 @@ test('info icons explain each field on hover, focus and tap', async ({ page }) =
 });
 
 test('every input has an info icon next to it', async ({ page }) => {
-  for (const name of ['sprint name', 'start date', 'sprint length', 'end date', 'weekends', 'holidays', 'points per person-day', 'fixed points', 'buffer', 'team and leave']) {
+  await setAnchor(page);
+  for (const name of [
+    'sprint number', 'start date', 'sprint length', 'weekends', 'holidays', 'points per person-day', 'buffer',
+    'fixed points', 'spillover', 'spillover in', 'spillover out', 'team and leave', 'all sprints',
+  ]) {
     await expect(page.getByRole('button', { name: `About ${name}`, exact: true })).toBeVisible();
   }
 });
 
+// ------------------------------------------------------------------ saving and sync
 test('edits autosave and survive a reload', async ({ page }) => {
-  await page.fill('#sprintName', 'Sprint 14');
-  await page.fill('#fixedPoints', '12');
+  await setAnchor(page);
+  await page.fill('#bufferPct', '12');
+  await addFixed(page, 'Support', 3);
   await expect(page.locator('#sync-status')).toContainText('Saved');
   await page.reload();
-  await expect(page.locator('#sprintName')).toHaveValue('Sprint 14');
-  await expect(page.locator('#fixedPoints')).toHaveValue('12');
+  await expect(page.locator('#anchorNumber')).toHaveValue('14');
+  await expect(page.locator('#bufferPct')).toHaveValue('12');
+  await expect(page.locator('#fixed-list')).toContainText('Support');
 });
 
 test('two people see each other\'s edits live, without overwriting each other', async ({ page, browser }) => {
+  await setAnchor(page);
   const other = await (await browser.newContext()).newPage();
-  await other.goto('/');
-  await expect(other.locator('#sync-status')).toContainText('Saved');
+  await other.goto(APP);
+  await expect(other.locator('#sprint-tabs')).toBeVisible();
 
-  await page.fill('#fixedPoints', '7');
-  await expect(other.locator('#fixedPoints')).toHaveValue('7');
-  await other.fill('#bufferPct', '25');
-  await expect(page.locator('#bufferPct')).toHaveValue('25');
-  await expect(page.locator('#fixedPoints')).toHaveValue('7');
+  await page.fill('#bufferPct', '7');
+  await expect(other.locator('#bufferPct')).toHaveValue('7');
+
+  // both edit at the same time, in different sprints
+  await addFixed(page, 'From A', 3);
+  await tab(other, 15).click();
+  await other.fill('#spillOut', '4');
+  await expect(page.locator('#fixed-list')).toContainText('From A');
+
+  await tab(page, 15).click();
+  await expect(page.locator('#spillOut')).toHaveValue('4');
+  await tab(other, 14).click();
+  await expect(other.locator('#fixed-list')).toContainText('From A');
 
   await addPerson(page, 'Asha');
-  await expect(other.getByText('Asha', { exact: true })).toBeVisible();
+  await expect(other.locator('#team-list')).toContainText('Asha');
   await other.context().close();
 });
 
@@ -170,81 +424,115 @@ test('shows offline, keeps editing, and saves after the connection returns', asy
   await expect(page.locator('#sync-status')).toContainText('Saved');
 
   blocked = true;
-  await page.evaluate(() => { /* force the current socket to drop by reloading the connection */ });
   await page.reload();
   await expect(page.locator('#sync-status')).toContainText('Offline');
-  await page.fill('#fixedPoints', '9'); // edit while offline
-  await expect(page.locator('#fixedPoints')).toHaveValue('9');
+  await page.fill('#bufferPct', '9'); // edit while offline
+  await expect(page.locator('#bufferPct')).toHaveValue('9');
 
   blocked = false; // next retry connects
   await expect(page.locator('#sync-status')).toContainText('Saved', { timeout: 20_000 });
   await page.unrouteAll({ behavior: 'ignoreErrors' });
   await page.reload();
-  await expect(page.locator('#fixedPoints')).toHaveValue('9');
+  await expect(page.locator('#bufferPct')).toHaveValue('9');
 });
 
-test('backup downloads and restores', async ({ page }) => {
-  await page.fill('#sprintName', 'Backup me');
-  await setSprint(page);
+// ------------------------------------------------------------------ backup, delete, misc
+test('backup downloads and restores everything, including every sprint', async ({ page }) => {
+  await setAnchor(page);
   await addPerson(page, 'Asha');
+  await addFixed(page, 'Support', 3);
+  await page.fill('#spillOut', '2');
+  await tab(page, 16).click();
+  await addFixed(page, 'Later', 1);
   await expect(page.locator('#sync-status')).toContainText('Saved');
 
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download backup' }).click()]);
   const file = await download.path();
   const json = JSON.parse(fs.readFileSync(file, 'utf8'));
-  expect(json.fields.sprintName).toBe('Backup me');
+  expect(json.version).toBe(2);
   expect(json.fields.members[0].name).toBe('Asha');
+  expect(Object.keys(json.fields.sprints).sort()).toEqual(['14', '16']);
 
-  await page.getByRole('button', { name: 'Delete all data' }).first().click();
+  await page.locator('#delete-open').click();
   await page.locator('#delete-confirm').click();
-  await expect(page.locator('#sprintName')).toHaveValue('');
+  await expect(page.locator('#setup-note')).toBeVisible();
 
   await page.setInputFiles('#import-file', file);
-  await expect(page.locator('#sprintName')).toHaveValue('Backup me');
-  await expect(page.getByText('Asha', { exact: true })).toBeVisible();
+  await expect(page.locator('#sprint-tabs')).toBeVisible();
+  await expect(page.locator('#team-list')).toContainText('Asha');
+  await tab(page, 16).click();
+  await expect(page.locator('#fixed-list')).toContainText('Later');
+});
+
+test('restoring a backup replaces what is there, instead of mixing the two', async ({ page }) => {
+  await setAnchor(page);
+  await addFixed(page, 'Old item', 3);
+  await tab(page, 12).click();
+  await addFixed(page, 'Old past item', 1);
+  const backup = {
+    version: 2,
+    fields: { sprintBase: { number: 14, startDate: '2026-11-09', length: 14 }, sprints: { 14: { fixedItems: [{ id: 'n', label: 'New item', points: 2 }], spillOut: 0 } } },
+  };
+  await page.setInputFiles('#import-file', { name: 'b.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup)) });
+  await expect(page.locator('#sync-status')).toContainText('Saved');
+  await tab(page, 14).click();
+  await expect(page.locator('#fixed-list')).toContainText('New item', { timeout: 10_000 });
+  await expect(page.locator('#fixed-list')).not.toContainText('Old item');
+  await tab(page, 12).click();
+  await expect(page.locator('#fixed-list')).not.toContainText('Old past item'); // sprints not in the backup are gone
+});
+
+test('an old single sprint backup is converted when restored', async ({ page }) => {
+  const old = {
+    version: 1,
+    fields: {
+      sprintName: 'Sprint 9', dateMode: 'range', startDate: '2026-11-09', endDate: '2026-11-22', numDays: 14,
+      weekendDays: [0, 6], holidays: [], members: [{ id: 'a', name: 'Asha', leave: [] }],
+      pointsPerPersonDay: 1, fixedPoints: 5, bufferPct: 10,
+    },
+  };
+  await page.setInputFiles('#import-file', { name: 'old.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(old)) });
+  await expect(page.locator('#anchorNumber')).toHaveValue('9');
+  await expect(page.locator('#bufferPct')).toHaveValue('10');
+  await expect(page.locator('#fixed-list')).toContainText('Fixed points');
+  await expect(dd(page, 'fixed')).toHaveText('5');
 });
 
 test('restoring a file that is not a backup shows an error and changes nothing', async ({ page }) => {
-  await page.fill('#sprintName', 'Keep');
+  await page.fill('#bufferPct', '3');
   await page.setInputFiles('#import-file', { name: 'x.json', mimeType: 'application/json', buffer: Buffer.from('{"hello":1}') });
   await expect(page.locator('#notice')).toContainText('not a Sprint Planner backup');
-  await expect(page.locator('#sprintName')).toHaveValue('Keep');
+  await expect(page.locator('#bufferPct')).toHaveValue('3');
 });
 
 test('delete all data asks first, and empties the room for everyone', async ({ page, browser }) => {
+  await setAnchor(page);
   const other = await (await browser.newContext()).newPage();
-  await other.goto('/');
-  await page.fill('#sprintName', 'Temporary');
-  await expect(other.locator('#sprintName')).toHaveValue('Temporary');
+  await other.goto(APP);
+  await expect(other.locator('#sprint-tabs')).toBeVisible();
 
   await page.locator('#delete-open').click();
   await page.locator('#delete-cancel').click();
-  await expect(page.locator('#sprintName')).toHaveValue('Temporary'); // cancelled
+  await expect(page.locator('#sprint-tabs')).toBeVisible(); // cancelled
 
   await page.locator('#delete-open').click();
   await page.locator('#delete-confirm').click();
-  await expect(page.locator('#sprintName')).toHaveValue('');
-  await expect(other.locator('#sprintName')).toHaveValue('');
+  await expect(page.locator('#setup-note')).toBeVisible();
+  await expect(other.locator('#setup-note')).toBeVisible();
   await other.context().close();
 });
 
-test('warns when fixed points exceed capacity', async ({ page }) => {
-  await setSprint(page, '2026-11-02', '2026-11-06');
-  await addPerson(page, 'Asha');
-  await page.fill('#fixedPoints', '50');
-  await expect(page.locator('.warning')).toContainText('Fixed points (50) exceed gross capacity (5)');
-  await expect(page.locator('#net')).toHaveText('0');
-});
-
 test('retention note shows the next automatic deletion date after an edit', async ({ page }) => {
-  await page.fill('#sprintName', 'x');
+  await page.fill('#bufferPct', '1');
   await expect(page.locator('#retention')).toContainText('Next automatic deletion');
 });
 
 test('fits a phone screen without sideways page scroll', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
-  await setSprint(page, '2026-11-02', '2026-11-27');
+  await setAnchor(page);
   await addPerson(page, 'Asha Longname Example');
+  await addFixed(page, 'A rather long description of fixed work', 3);
+  await row(page, 'Asha Longname').getByRole('button', { name: /Edit days/ }).click();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });

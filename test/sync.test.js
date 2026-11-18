@@ -215,3 +215,64 @@ test('edits made before the first server state are kept and sent once connected'
   mock.timers.tick(500);
   assert.deepEqual(last().sets()[0].fields, { sprintName: 'early' });
 });
+
+// ---------- per-sprint merge ("sprints" is a map; each key merges on its own) ----------
+const sp = (o) => ({ fixedItems: [], spillOut: 0, spillIn: null, ...o });
+
+test('sprints edits merge per sprint, so edits to different sprints are sent together', () => {
+  make({ initial: base({ sprints: { 13: sp({ spillOut: 1 }) } }) }).connect();
+  last().serverOpen(); last().serverSend({ type: 'state', state: base({ sprints: { 13: sp({ spillOut: 1 }) } }) });
+  client.update({ sprints: { 12: sp({ spillOut: 2 }) } });
+  client.update({ sprints: { 14: sp({ spillOut: 3 }) } });
+  assert.deepEqual(Object.keys(client.state.sprints).sort(), ['12', '13', '14']);
+  mock.timers.tick(500);
+  assert.deepEqual(Object.keys(last().sets()[0].fields.sprints).sort(), ['12', '14']); // only what changed
+});
+
+test('a null sprint entry deletes that sprint locally', () => {
+  make({ initial: base({ sprints: { 12: sp({}) } }) }).connect();
+  last().serverOpen(); last().serverSend({ type: 'state', state: base({ sprints: { 12: sp({}), 13: sp({}) } }) });
+  client.update({ sprints: { 12: null } });
+  assert.deepEqual(Object.keys(client.state.sprints), ['13']);
+});
+
+test('a remote edit to another sprint does not disturb my pending sprint edit', () => {
+  make().connect(); last().serverOpen(); last().serverSend({ type: 'state', state: base({ sprints: {} }) });
+  client.update({ sprints: { 12: sp({ spillOut: 9 }) } });
+  last().serverSend({ type: 'state', state: base({ revision: 1, sprints: { 12: sp({ spillOut: 1 }), 13: sp({ spillOut: 5 }) } }) });
+  assert.equal(client.state.sprints[12].spillOut, 9); // mine, still pending
+  assert.equal(client.state.sprints[13].spillOut, 5); // theirs
+});
+
+test('in-flight sprint edits stay visible until acknowledged', () => {
+  make().connect(); last().serverOpen(); last().serverSend({ type: 'state', state: base({ sprints: {} }) });
+  client.update({ sprints: { 12: sp({ spillOut: 9 }) } });
+  mock.timers.tick(500);
+  const id = last().sets()[0].id;
+  last().serverSend({ type: 'state', state: base({ revision: 1, sprints: { 13: sp({}) } }) });
+  assert.equal(client.state.sprints[12].spillOut, 9);
+  last().serverSend({ type: 'state', ack: id, state: base({ revision: 2, sprints: { 12: sp({ spillOut: 9 }), 13: sp({}) } }) });
+  assert.equal(client.state.sprints[12].spillOut, 9);
+  assert.equal(statusNow(), 'saved');
+});
+
+// ---------- flushNow (page is closing or hidden) ----------
+test('flushNow sends pending edits immediately instead of waiting for the pause', () => {
+  make().connect(); last().serverOpen(); last().serverSend({ type: 'state', state: base() });
+  client.update({ bufferPct: 5 });
+  assert.equal(last().sets().length, 0);
+  client.flushNow();
+  assert.equal(last().sets().length, 1);
+  assert.deepEqual(last().sets()[0].fields, { bufferPct: 5 });
+  mock.timers.tick(1000);
+  assert.equal(last().sets().length, 1); // the timer does not send it again
+});
+
+test('flushNow does nothing when there is nothing to send, or when offline', () => {
+  make().connect(); last().serverOpen(); last().serverSend({ type: 'state', state: base() });
+  client.flushNow();
+  assert.equal(last().sets().length, 0);
+  last().serverDrop();
+  client.update({ bufferPct: 5 });
+  assert.doesNotThrow(() => client.flushNow());
+});
