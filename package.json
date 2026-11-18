@@ -1,0 +1,21 @@
+{
+  "name": "sprint-planner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:unit && npm run test:worker && npm run test:e2e",
+    "test:unit": "node --test test/",
+    "test:worker": "vitest run --root worker",
+    "test:e2e": "playwright test",
+    "dev:web": "node scripts/serve.js",
+    "dev:worker": "wrangler dev --config worker/wrangler.toml"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.8.4",
+    "@playwright/test": "^1.65.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.164.0"
+  }
+}

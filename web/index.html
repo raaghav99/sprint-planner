@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sprint Planner</title>
+  <meta name="description" content="Shared sprint capacity planner: dates, leave, fixed points and buffer in one place.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314213d'/%3E%3Crect x='6' y='6' width='8' height='8' fill='%23fff'/%3E%3Crect x='18' y='6' width='8' height='8' fill='%23fff'/%3E%3Crect x='6' y='18' width='8' height='8' fill='%23fff'/%3E%3Crect x='18' y='18' width='8' height='8' fill='none' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Sprint Planner</h1>
+      <span class="room">
+        Room <strong id="room-name">playwright</strong>
+        <button type="button" class="info" data-tip="Everyone who opens this page edits the same shared room. Changes appear for the whole team within a second." aria-label="About the room">i</button>
+      </span>
+    </div>
+    <p id="sync-status" class="sync" data-state="connecting" role="status" aria-live="polite">Connecting…</p>
+  </header>
+
+  <main class="layout">
+    <!-- ================= inputs ================= -->
+    <div class="rail">
+      <section aria-labelledby="h-sprint">
+        <h2 id="h-sprint">Sprint</h2>
+
+        <div class="field">
+          <label for="sprintName">Name <button type="button" class="info" data-tip="A label for this sprint, like Sprint 14. It is only shown to the team." aria-label="About sprint name">i</button></label>
+          <input id="sprintName" type="text" maxlength="80" autocomplete="off" placeholder="Sprint 14">
+        </div>
+
+        <div class="field">
+          <label for="startDate">Start date <button type="button" class="info" data-tip="The first day of the sprint." aria-label="About start date">i</button></label>
+          <input id="startDate" type="date">
+        </div>
+
+        <fieldset class="field seg" aria-describedby="date-summary">
+          <legend>Sprint length <button type="button" class="info" data-tip="Set the sprint by its last day, or by how many calendar days it runs from the start date. Weekends count here; they are removed from working days below." aria-label="About sprint length">i</button></legend>
+          <div class="segmented">
+            <label><input type="radio" name="dateMode" value="range"> End date</label>
+            <label><input type="radio" name="dateMode" value="days"> Number of days</label>
+          </div>
+        </fieldset>
+
+        <div class="field" id="field-end">
+          <label for="endDate">End date <button type="button" class="info" data-tip="The last day of the sprint. This day is included." aria-label="About end date">i</button></label>
+          <input id="endDate" type="date">
+        </div>
+        <div class="field" id="field-days" hidden>
+          <label for="numDays">Number of days <button type="button" class="info" data-tip="Calendar days from the start date, weekends included. A two-week sprint is 14 days." aria-label="About number of days">i</button></label>
+          <input id="numDays" type="number" min="1" max="366" step="1" inputmode="numeric">
+        </div>
+        <p id="date-summary" class="hint"></p>
+
+        <fieldset class="field">
+          <legend>Weekends <button type="button" class="info" data-tip="Days that are never worked. Untick a day to make it a working day, for example a Sunday for teams that work Sunday to Thursday." aria-label="About weekends">i</button></legend>
+          <div id="weekend-days" class="days"></div>
+        </fieldset>
+
+        <div class="field">
+          <label for="holiday-input">Holidays <button type="button" class="info" data-tip="Public holidays when the whole team is off. Each one removes a working day for everyone. Holidays that fall on a weekend change nothing." aria-label="About holidays">i</button></label>
+          <div class="inline">
+            <input id="holiday-input" type="date">
+            <button type="button" id="holiday-add" class="btn">Add</button>
+          </div>
+          <ul id="holiday-list" class="chips" aria-label="Holidays"></ul>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-points">
+        <h2 id="h-points">Points</h2>
+
+        <div class="field">
+          <label for="pointsPerPersonDay">Points per person-day <button type="button" class="info" data-tip="Story points one person delivers in a full working day. Use 1 if you plan in person-days." aria-label="About points per person-day">i</button></label>
+          <input id="pointsPerPersonDay" type="number" min="0" max="1000" step="0.1" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="fixedPoints">Fixed points <button type="button" class="info" data-tip="Points already spoken for before planning: carry-over, support rotation, recurring work. They are subtracted from capacity first." aria-label="About fixed points">i</button></label>
+          <input id="fixedPoints" type="number" min="0" max="100000" step="0.5" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label for="bufferPct">Buffer % <button type="button" class="info" data-tip="Share of the remaining capacity you keep free for surprises. A 20% buffer on 30 points keeps 6 points unplanned." aria-label="About buffer">i</button></label>
+          <input id="bufferPct" type="number" min="0" max="100" step="1" inputmode="decimal">
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= results ================= -->
+    <div class="main">
+      <section class="result" aria-labelledby="h-result">
+        <h2 id="h-result" class="sr-only">Capacity</h2>
+        <p class="lede">
+          <span id="net" class="big">0</span>
+          <span class="lede-text">points to plan for new stories
+            <button type="button" class="info" data-tip="What is left after fixed points and the buffer: (gross capacity − fixed points) minus the buffer. Plan new stories up to this number." aria-label="About points for new stories">i</button>
+          </span>
+        </p>
+        <div id="warnings" class="warnings" role="status"></div>
+
+        <div id="bar" class="bar" role="img" aria-label="Capacity breakdown"></div>
+        <ul id="bar-legend" class="legend"></ul>
+
+        <dl id="breakdown" class="breakdown"></dl>
+      </section>
+
+      <section class="people" aria-labelledby="h-team">
+        <div class="people-head">
+          <h2 id="h-team">Team and leave
+            <button type="button" class="info" data-tip="Everyone working in this sprint. Select a day in the grid to cycle it: working, off, or half day. Or paste a leave table from Excel." aria-label="About team and leave">i</button>
+          </h2>
+          <button type="button" id="paste-open" class="btn primary">Paste leave from Excel</button>
+        </div>
+
+        <form id="member-form" class="inline">
+          <label for="member-name" class="sr-only">Person name</label>
+          <input id="member-name" type="text" maxlength="80" autocomplete="off" placeholder="Add a person">
+          <button class="btn" type="submit">Add person</button>
+        </form>
+
+        <div id="grid-wrap" class="grid-wrap"></div>
+        <ul class="key" aria-label="Grid key">
+          <li><span class="cell on"></span> Working</li>
+          <li><span class="cell half"></span> Half day</li>
+          <li><span class="cell off"></span> Off</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <p id="retention">Everything here is deleted 3 months after the last edit. Only names, leave days, dates and numbers are stored.</p>
+    <div class="foot-actions">
+      <button type="button" id="export" class="link">Download backup</button>
+      <button type="button" id="import" class="link">Restore backup</button>
+      <button type="button" id="delete-open" class="link danger">Delete all data</button>
+      <input id="import-file" type="file" accept="application/json,.json" hidden>
+    </div>
+    <p id="notice" class="notice" role="status" aria-live="polite"></p>
+  </footer>
+
+  <!-- paste dialog -->
+  <dialog id="paste-dialog" aria-labelledby="paste-title">
+    <form method="dialog" id="paste-form">
+      <h2 id="paste-title">Paste leave from Excel</h2>
+      <p class="hint">Select the people and dates in Excel, copy, and paste here. Header rows, totals and sprint rows are skipped.</p>
+      <label for="paste-text" class="sr-only">Pasted table</label>
+      <textarea id="paste-text" rows="6" spellcheck="false" placeholder="Resource&#9;2-Nov&#9;3-Nov&#9;4-Nov&#10;Asha&#9;1&#9;0&#9;1"></textarea>
+
+      <div class="opts">
+        <label>Cells mean
+          <button type="button" class="info" data-tip="Auto-detect works for most sheets. Choose 'availability' if 1 means working and 0 means off. Choose 'leave' if marks like 1 or x mean the person is away." aria-label="About cell meaning">i</button>
+          <select id="paste-convention">
+            <option value="auto">Auto-detect</option>
+            <option value="availability">Availability (1 working, 0 off)</option>
+            <option value="leave">Leave (marks mean away)</option>
+          </select>
+        </label>
+        <label>Date order
+          <button type="button" class="info" data-tip="How to read dates like 03/04/2026. Day first means 3 April. Month first means March 4." aria-label="About date order">i</button>
+          <select id="paste-order">
+            <option value="dmy">Day first (31/12)</option>
+            <option value="mdy">Month first (12/31)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="paste-blank" checked> Blank cells mean off
+          <button type="button" class="info" data-tip="In your sheet an empty row means the person is not available. Untick if an empty cell should count as a working day." aria-label="About blank cells">i</button>
+        </label>
+      </div>
+
+      <div id="paste-preview" class="preview" aria-live="polite"></div>
+
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="paste-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="paste-apply" value="apply" disabled>Apply to sprint</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- delete dialog -->
+  <dialog id="delete-dialog" aria-labelledby="delete-title">
+    <form method="dialog">
+      <h2 id="delete-title">Delete all data?</h2>
+      <p>This removes the sprint, team and leave for everyone in this room. It cannot be undone. Download a backup first if you may need it.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="delete-cancel">Keep data</button>
+        <button type="submit" class="btn danger-fill" id="delete-confirm" value="delete">Delete all data</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="tooltip" role="tooltip" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+name = "sprint-planner"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[vars]
+# Comma-separated list of browser origins allowed to open the WebSocket.
+# Replace the first entry with your real GitHub Pages origin before deploying.
+ALLOWED_ORIGINS = "https://raaghav99.github.io,http://localhost:8080,http://127.0.0.1:8080"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
