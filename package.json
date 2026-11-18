@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "npm run test:unit && npm run test:worker && npm run test:e2e",
-    "test:unit": "node --test test/",
+    "test:unit": "node --test \"test/*.test.js\"",
     "test:worker": "vitest run --root worker",
     "test:e2e": "playwright test",
     "dev:web": "node scripts/serve.js",
