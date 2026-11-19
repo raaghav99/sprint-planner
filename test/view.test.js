@@ -179,3 +179,21 @@ test('replaceSprints: restoring a backup removes sprints that are not in it', as
   assert.deepEqual(replaceSprints({}, {}), {});
   assert.deepEqual(replaceSprints(undefined, { 1: { spillOut: 1 } }), { 1: { spillOut: 1 } });
 });
+
+// ---------- fixedName (custom title of the fixed points section) ----------
+import { fixedName, DEFAULT_FIXED_LABEL } from '../web/view.js';
+
+test('fixedName: default when empty, missing or blank', () => {
+  assert.equal(DEFAULT_FIXED_LABEL, 'Fixed story points');
+  for (const s of [{}, null, { fixedLabel: '' }, { fixedLabel: '   ' }, { fixedLabel: 5 }]) assert.equal(fixedName(s), 'Fixed story points');
+});
+
+test('fixedName: uses the custom name, trimmed', () => {
+  assert.equal(fixedName({ fixedLabel: '  RCA story points ' }), 'RCA story points');
+});
+
+test('backups include the custom name', () => {
+  assert.ok(FIELD_KEYS.includes('fixedLabel'));
+  const out = sanitizeBackup({ version: 2, fields: { sprintBase: { number: 1, startDate: '', length: 14 }, fixedLabel: 'RCA' } });
+  assert.equal(out.fixedLabel, 'RCA');
+});

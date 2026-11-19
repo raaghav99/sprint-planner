@@ -3,7 +3,7 @@ import { parseISO } from './capacity.js';
 import { migrateState, LEGACY_KEYS } from './migrate.js';
 
 export const FIELD_KEYS = [
-  'sprintBase', 'sprints', 'weekendDays', 'holidays', 'members', 'pointsPerPersonDay', 'bufferPct',
+  'sprintBase', 'sprints', 'weekendDays', 'holidays', 'members', 'pointsPerPersonDay', 'bufferPct', 'fixedLabel',
 ];
 
 const LIMITS = {
@@ -149,4 +149,11 @@ export function replaceSprints(current, incoming) {
   const out = { ...incoming };
   for (const k of Object.keys(current ?? {})) if (!(k in out)) out[k] = null;
   return out;
+}
+
+/** The name shown for the fixed points section everywhere. Empty falls back to the default. */
+export const DEFAULT_FIXED_LABEL = 'Fixed story points';
+export function fixedName(state) {
+  const v = typeof state?.fixedLabel === 'string' ? state.fixedLabel.trim() : '';
+  return v || DEFAULT_FIXED_LABEL;
 }

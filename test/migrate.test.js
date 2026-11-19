@@ -66,3 +66,8 @@ test('empty or odd input gives a usable blank state', () => {
 test('length is clamped to a sane range', () => {
   assert.equal(migrateState({ ...legacy, endDate: '2027-12-31' }).sprintBase.length, 60);
 });
+
+test('migrated and existing data gets an empty fixed section name, and keeps a custom one', () => {
+  assert.equal(migrateState({ sprintName: 'Sprint 9' }).fixedLabel, '');
+  assert.equal(migrateState({ sprintBase: { number: 1, startDate: '', length: 14 }, fixedLabel: 'RCA' }).fixedLabel, 'RCA');
+});

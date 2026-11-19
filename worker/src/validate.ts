@@ -21,6 +21,8 @@ export interface RoomFields {
   members: Member[];
   pointsPerPersonDay: number;
   bufferPct: number;
+  /** What the fixed points section is called. Empty means the default, 'Fixed story points'. */
+  fixedLabel: string;
 }
 
 export interface RoomState extends RoomFields {
@@ -37,6 +39,7 @@ export const DEFAULT_FIELDS: RoomFields = {
   members: [],
   pointsPerPersonDay: 1,
   bufferPct: 0,
+  fixedLabel: '',
 };
 
 export const MAX_MESSAGE_BYTES = 256 * 1024;
@@ -94,6 +97,7 @@ const CHECKS: Record<keyof RoomFields, Check> = {
   members: (v) => Array.isArray(v) && v.length <= 100 && v.every(validMember),
   pointsPerPersonDay: (v) => isNum(v, 0, 1000),
   bufferPct: (v) => isNum(v, 0, 100),
+  fixedLabel: (v) => isStr(v, 60),
 };
 
 /** Returns the cleaned fields or an error message. Only known keys are copied. */

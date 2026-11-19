@@ -35,6 +35,7 @@ export function migrateState(input) {
   out.members ??= [];
   out.pointsPerPersonDay ??= 1;
   out.bufferPct ??= 0;
+  out.fixedLabel ??= '';
   for (const k of LEGACY_KEYS) delete out[k];
   return out;
 }

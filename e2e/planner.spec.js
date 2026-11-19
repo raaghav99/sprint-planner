@@ -199,6 +199,24 @@ test('a fixed item can be renamed and its points changed, and it updates everywh
   await expect(row14).toContainText('6'); // overview fixed column
 });
 
+test('the fixed points section can be renamed, and the new name shows everywhere', async ({ page }) => {
+  await setAnchor(page);
+  await addPerson(page, 'Asha');
+  await expect(page.locator('#fixedLabel')).toHaveValue('');
+  await expect(page.locator('#fixedLabel')).toHaveAttribute('placeholder', 'Fixed story points');
+  await expect(page.locator('dt', { hasText: 'Fixed story points' })).toBeVisible(); // default name
+  await page.locator('#fixedLabel').fill('RCA story points');
+  await expect(page.locator('dt', { hasText: 'RCA story points' })).toBeVisible();
+  await expect(page.locator('#overview thead')).toContainText('RCA story points');
+  await addFixed(page, 'Login bug', 3);
+  await expect(page.locator('#bar-legend')).toContainText('Login bug'); // item names still show per item
+  await expect(page.locator('#sync-status')).toContainText('Saved');
+  await page.reload();
+  await expect(page.locator('#fixedLabel')).toHaveValue('RCA story points');
+  await page.locator('#fixedLabel').fill('');
+  await expect(page.locator('dt', { hasText: 'Fixed story points' })).toBeVisible(); // back to the default
+});
+
 test('typing in a fixed item name keeps the cursor in the box', async ({ page }) => {
   await setAnchor(page);
   await addFixed(page, 'A', 1);

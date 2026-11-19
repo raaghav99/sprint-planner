@@ -215,6 +215,8 @@ describe('validation', () => {
     ['old sprint name field', { sprintName: 'x' }],
     ['non-number points', { pointsPerPersonDay: 'x' }],
     ['bufferPct over 100', { bufferPct: 101 }],
+    ['fixedLabel too long', { fixedLabel: 'x'.repeat(61) }],
+    ['fixedLabel not a string', { fixedLabel: 5 }],
     ['negative bufferPct', { bufferPct: -1 }],
     ['bad weekend day', { weekendDays: [7] }],
     ['bad holiday', { holidays: ['nope'] }],
@@ -249,6 +251,16 @@ describe('validation', () => {
       expect((await a.next()).state.revision).toBe(1);
     });
   }
+
+  it('stores a custom name for the fixed points section, and starts with the default', async () => {
+    const a = await connect();
+    expect((await a.next()).state.fixedLabel).toBe('');
+    a.send({ type: 'set', fields: { fixedLabel: 'RCA story points' } });
+    expect((await a.next()).state.fixedLabel).toBe('RCA story points');
+    await evictDurableObject(stub());
+    const b = await connect();
+    expect((await b.next()).state.fixedLabel).toBe('RCA story points');
+  });
 
   it('rejects malformed JSON and unknown message types', async () => {
     const a = await connect();

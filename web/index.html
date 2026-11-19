@@ -78,8 +78,8 @@
         <p class="rail-for">For <b id="rail-sprint-name">this sprint</b>. Pick another sprint in the All sprints table below to change its numbers.</p>
 
           <section class="fixed rail-card" aria-labelledby="h-fixed">
-            <h2 id="h-fixed">Fixed story points
-              <button type="button" class="info" data-tip="Points already spoken for before planning, such as support rotation, recurring work or committed items. Add one line for each. They are all subtracted from capacity first." aria-label="About fixed points">i</button>
+            <h2 id="h-fixed"><input id="fixedLabel" class="title-input" type="text" maxlength="60" autocomplete="off" placeholder="Fixed story points" aria-label="Name of this section">
+              <button type="button" class="info" data-tip="Points already spoken for before planning, such as support rotation, RCA or committed items. Add one line for each. Click the title to rename this section, for example to RCA story points; the new name shows everywhere. They are all subtracted from capacity first." aria-label="About fixed points">i</button>
             </h2>
             <ul id="fixed-list" class="items" aria-label="Fixed story points"></ul>
             <form id="fixed-form" class="add-row">

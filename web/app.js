@@ -5,7 +5,7 @@ import {
   capacityFor, currentSprint, dayCapacity, addDays, overview, sprintDatesFor, sprintProgress, sprintNumbers, spillInFor, DEFAULT_BASE,
 } from './sprints.js';
 import {
-  applyPaste, barSegments, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
+  applyPaste, barSegments, fixedName, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
   portionOn, replaceSprints, sanitizeBackup,
 } from './view.js';
 
@@ -16,7 +16,7 @@ const DEFAULTS = {
   revision: 0, updatedAt: null, expiresAt: null,
   sprintBase: { ...DEFAULT_BASE }, sprints: {},
   weekendDays: [0, 6], holidays: [], members: [],
-  pointsPerPersonDay: 1, bufferPct: 0,
+  pointsPerPersonDay: 1, bufferPct: 0, fixedLabel: '',
 };
 
 const TIPS = {
@@ -107,6 +107,7 @@ $('anchorEnd').addEventListener('input', (e) => {
   const length = Math.round((Date.parse(e.target.value) - Date.parse(b.startDate)) / 86400000) + 1;
   client.update({ sprintBase: { ...b, length: clampField('length', length) } });
 });
+$('fixedLabel').addEventListener('input', (e) => client.update({ fixedLabel: e.target.value.slice(0, 60) }));
 for (const f of ['pointsPerPersonDay', 'bufferPct']) $(f).addEventListener('input', (e) => client.update({ [f]: clampField(f, e.target.value) }));
 
 $('weekend-days').addEventListener('change', () => {
@@ -230,6 +231,7 @@ function render() {
   setValue($('anchorEnd'), base.startDate ? addDays(base.startDate, base.length - 1) : '');
   setValue($('pointsPerPersonDay'), s.pointsPerPersonDay ?? 1);
   setValue($('bufferPct'), s.bufferPct ?? 0);
+  setValue($('fixedLabel'), s.fixedLabel ?? '');
   for (const i of document.querySelectorAll('#weekend-days input')) i.checked = s.weekendDays.includes(Number(i.value));
   $('holiday-list').innerHTML = s.holidays.map((d) =>
     `<li>${esc(fmtDate(d, { year: true }))}<button type="button" data-date="${d}" aria-label="Remove holiday ${esc(fmtDate(d, { year: true }))}">×</button></li>`).join('');
@@ -282,11 +284,11 @@ function renderSprint(s, cap, current) {
     el.hidden = !seg;
     el.style.flexGrow = seg ? String(seg.flex) : '0';
   }
-  bar.setAttribute('aria-label', `Gross capacity ${fmtNum(cap.gross)} points: ${fmtNum(cap.fixed)} fixed, ${fmtNum(cap.spill)} spillover, ${fmtNum(cap.bufferPoints)} buffer, ${fmtNum(cap.net)} for new stories`);
+  bar.setAttribute('aria-label', `Gross capacity ${fmtNum(cap.gross)} points: ${fmtNum(cap.fixed)} ${fixedName(s)}, ${fmtNum(cap.spill)} spillover, ${fmtNum(cap.bufferPoints)} buffer, ${fmtNum(cap.net)} for new stories`);
 
   const fixedItems = (s.sprints?.[selected]?.fixedItems ?? []).filter((i) => Number(i.points) > 0);
   $('bar-legend').innerHTML = [
-    ...(fixedItems.length ? fixedItems.map((i) => ['var(--fixed)', i.label || 'Fixed points', Number(i.points)]) : [['var(--fixed)', 'Fixed', cap.fixed]]),
+    ...(fixedItems.length ? fixedItems.map((i) => ['var(--fixed)', i.label || 'Fixed points', Number(i.points)]) : [['var(--fixed)', fixedName(s), cap.fixed]]),
     ['var(--spill)', 'Spillover', cap.spill],
     ['var(--buffer)', 'Buffer', cap.bufferPoints],
     ['var(--net)', 'For new stories', cap.net],
@@ -297,7 +299,7 @@ function renderSprint(s, cap, current) {
     ['activeMembers', 'Active people', cap.activeMembers],
     ['personDays', 'Person-days', cap.personDays],
     ['gross', 'Gross capacity', cap.gross],
-    ['fixed', 'Fixed points', cap.fixed],
+    ['fixed', fixedName(s), cap.fixed],
     ['spill', 'Spillover in', cap.spill],
     ['buffer', `Buffer (${fmtNum(cap.bufferPct)}%)`, cap.bufferPoints],
     ['net', 'For new stories', cap.net],
@@ -350,7 +352,7 @@ function renderSpill(s) {
 
 function renderOverview(s, now) {
   const rows = overview(s, now);
-  $('overview').innerHTML = `<thead><tr><th scope="col">Sprint</th><th scope="col">Dates</th><th scope="col" class="n">Active people</th><th scope="col" class="n">Gross</th><th scope="col" class="n">Fixed</th><th scope="col" class="n">Spillover in</th><th scope="col" class="n">For new stories</th></tr></thead><tbody>${
+  $('overview').innerHTML = `<thead><tr><th scope="col">Sprint</th><th scope="col">Dates</th><th scope="col" class="n">Active people</th><th scope="col" class="n">Gross</th><th scope="col" class="n">${esc(fixedName(s))}</th><th scope="col" class="n">Spillover in</th><th scope="col" class="n">For new stories</th></tr></thead><tbody>${
     rows.map((r) => `<tr data-n="${r.number}" class="${r.number === selected ? 'sel' : ''}"><th scope="row"><button type="button" class="link" data-n="${r.number}">Sprint ${r.number}</button>${r.isCurrent ? ' <span class="pill">Current</span>' : ''}</th><td>${esc(fmtShort(r.start))} – ${esc(fmtShort(r.end))}</td><td class="n">${r.activeMembers}</td><td class="n">${fmtNum(r.gross)}</td><td class="n">${fmtNum(r.fixed)}</td><td class="n">${fmtNum(r.spillIn)}</td><td class="n strong">${fmtNum(r.net)}</td></tr>`).join('')
   }</tbody>`;
 }
