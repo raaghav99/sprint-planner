@@ -203,16 +203,16 @@ test('the fixed points section can be renamed, and the new name shows everywhere
   await setAnchor(page);
   await addPerson(page, 'Asha');
   await expect(page.locator('#fixedLabel')).toHaveValue('');
-  await expect(page.locator('#fixedLabel')).toHaveAttribute('placeholder', 'Fixed story points');
+  await expect(page.locator('#fixedLabel')).toHaveAttribute('placeholder', 'alias');
   await expect(page.locator('dt', { hasText: 'Fixed story points' })).toBeVisible(); // default name
-  await page.locator('#fixedLabel').fill('RCA story points');
-  await expect(page.locator('dt', { hasText: 'RCA story points' })).toBeVisible();
-  await expect(page.locator('#overview thead')).toContainText('RCA story points');
+  await page.locator('#fixedLabel').fill('RCA');
+  await expect(page.locator('dt', { hasText: 'Fixed story points (RCA)' })).toBeVisible();
+  await expect(page.locator('#overview thead')).toContainText('Fixed story points (RCA)');
   await addFixed(page, 'Login bug', 3);
   await expect(page.locator('#bar-legend')).toContainText('Login bug'); // item names still show per item
   await expect(page.locator('#sync-status')).toContainText('Saved');
   await page.reload();
-  await expect(page.locator('#fixedLabel')).toHaveValue('RCA story points');
+  await expect(page.locator('#fixedLabel')).toHaveValue('RCA');
   await page.locator('#fixedLabel').fill('');
   await expect(page.locator('dt', { hasText: 'Fixed story points' })).toBeVisible(); // back to the default
 });

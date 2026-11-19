@@ -154,6 +154,7 @@ export function replaceSprints(current, incoming) {
 /** The name shown for the fixed points section everywhere. Empty falls back to the default. */
 export const DEFAULT_FIXED_LABEL = 'Fixed story points';
 export function fixedName(state) {
-  const v = typeof state?.fixedLabel === 'string' ? state.fixedLabel.trim() : '';
-  return v || DEFAULT_FIXED_LABEL;
+  const raw = typeof state?.fixedLabel === 'string' ? state.fixedLabel : '';
+  const alias = raw.replace(/^[\s(]+|[\s)]+$/g, '');
+  return alias ? DEFAULT_FIXED_LABEL + ' (' + alias + ')' : DEFAULT_FIXED_LABEL;
 }

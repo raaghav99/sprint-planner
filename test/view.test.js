@@ -188,8 +188,9 @@ test('fixedName: default when empty, missing or blank', () => {
   for (const s of [{}, null, { fixedLabel: '' }, { fixedLabel: '   ' }, { fixedLabel: 5 }]) assert.equal(fixedName(s), 'Fixed story points');
 });
 
-test('fixedName: uses the custom name, trimmed', () => {
-  assert.equal(fixedName({ fixedLabel: '  RCA story points ' }), 'RCA story points');
+test('fixedName: shows the alias in brackets', () => {
+  assert.equal(fixedName({ fixedLabel: '  RCA ' }), 'Fixed story points (RCA)');
+  assert.equal(fixedName({ fixedLabel: '(RCA)' }), 'Fixed story points (RCA)');
 });
 
 test('backups include the custom name', () => {

@@ -78,8 +78,8 @@
         <p class="rail-for">For <b id="rail-sprint-name">this sprint</b>. Pick another sprint in the All sprints table below to change its numbers.</p>
 
           <section class="fixed rail-card" aria-labelledby="h-fixed">
-            <h2 id="h-fixed"><input id="fixedLabel" class="title-input" type="text" maxlength="60" autocomplete="off" placeholder="Fixed story points" aria-label="Name of this section">
-              <button type="button" class="info" data-tip="Points already spoken for before planning, such as support rotation, RCA or committed items. Add one line for each. Click the title to rename this section, for example to RCA story points; the new name shows everywhere. They are all subtracted from capacity first." aria-label="About fixed points">i</button>
+            <h2 id="h-fixed"><span>Fixed story points</span> <span class="alias">(<input id="fixedLabel" class="title-input" type="text" maxlength="40" autocomplete="off" placeholder="alias" aria-label="Alias for fixed story points, shown in brackets">)</span>
+              <button type="button" class="info" data-tip="Points already spoken for before planning, such as support rotation, RCA or committed items. Add one line for each. Type an alias in the brackets, for example RCA, to say what these points are for. It shows in brackets after the title everywhere and stays until you change it. They are all subtracted from capacity first." aria-label="About fixed points">i</button>
             </h2>
             <ul id="fixed-list" class="items" aria-label="Fixed story points"></ul>
             <form id="fixed-form" class="add-row">

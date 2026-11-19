@@ -107,7 +107,7 @@ $('anchorEnd').addEventListener('input', (e) => {
   const length = Math.round((Date.parse(e.target.value) - Date.parse(b.startDate)) / 86400000) + 1;
   client.update({ sprintBase: { ...b, length: clampField('length', length) } });
 });
-$('fixedLabel').addEventListener('input', (e) => client.update({ fixedLabel: e.target.value.slice(0, 60) }));
+$('fixedLabel').addEventListener('input', (e) => client.update({ fixedLabel: e.target.value.slice(0, 40) }));
 for (const f of ['pointsPerPersonDay', 'bufferPct']) $(f).addEventListener('input', (e) => client.update({ [f]: clampField(f, e.target.value) }));
 
 $('weekend-days').addEventListener('change', () => {
