@@ -36,7 +36,7 @@ async function addPerson(page, name) {
 async function addFixed(page, label, points) {
   await page.fill('#fixed-label', label);
   await page.fill('#fixed-points', String(points));
-  await page.getByRole('button', { name: 'Add fixed points' }).click();
+  await page.locator('#fixed-form button[type=submit]').click();
 }
 const row = (page, name) => page.locator('#team-list tr.person', { hasText: name });
 
@@ -206,8 +206,11 @@ test('the fixed points section can be renamed, and the new name shows everywhere
   await expect(page.locator('#fixedLabel')).toHaveAttribute('placeholder', 'alias');
   await expect(page.locator('dt', { hasText: 'Fixed story points' })).toBeVisible(); // default name
   await page.locator('#fixedLabel').fill('RCA');
-  await expect(page.locator('dt', { hasText: 'Fixed story points (RCA)' })).toBeVisible();
-  await expect(page.locator('#overview thead')).toContainText('Fixed story points (RCA)');
+  await expect(page.locator('dt', { hasText: 'RCA' })).toBeVisible();
+  await expect(page.locator('#overview thead')).toContainText('RCA');
+  await expect(page.locator('#overview thead')).not.toContainText('Fixed story points');
+  await expect(page.getByRole('button', { name: 'Add RCA' })).toBeVisible(); // static text follows the alias
+  await expect(page.locator('#breakdown button.info[aria-label*="RCA"]')).toHaveCount(1);
   await addFixed(page, 'Login bug', 3);
   await expect(page.locator('#bar-legend')).toContainText('Login bug'); // item names still show per item
   await expect(page.locator('#sync-status')).toContainText('Saved');

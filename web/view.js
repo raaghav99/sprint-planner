@@ -154,7 +154,15 @@ export function replaceSprints(current, incoming) {
 /** The name shown for the fixed points section everywhere. Empty falls back to the default. */
 export const DEFAULT_FIXED_LABEL = 'Fixed story points';
 export function fixedName(state) {
+  return fixedAlias(state) || DEFAULT_FIXED_LABEL;
+}
+/** The alias alone, without brackets or spaces. Empty when none is set. */
+export function fixedAlias(state) {
   const raw = typeof state?.fixedLabel === 'string' ? state.fixedLabel : '';
-  const alias = raw.replace(/^[\s(]+|[\s)]+$/g, '');
-  return alias ? DEFAULT_FIXED_LABEL + ' (' + alias + ')' : DEFAULT_FIXED_LABEL;
+  return raw.replace(/^[\s(]+|[\s)]+$/g, '');
+}
+/** Replace every mention of fixed (story) points in a sentence with the alias. No alias: unchanged. */
+export function swapFixed(text, state) {
+  const alias = fixedAlias(state);
+  return alias ? String(text).replace(/fixed (story )?points/gi, alias) : String(text);
 }

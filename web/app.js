@@ -5,7 +5,7 @@ import {
   capacityFor, currentSprint, dayCapacity, addDays, overview, sprintDatesFor, sprintProgress, sprintNumbers, spillInFor, DEFAULT_BASE,
 } from './sprints.js';
 import {
-  applyPaste, barSegments, fixedName, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
+  applyPaste, barSegments, fixedName, swapFixed, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
   portionOn, replaceSprints, sanitizeBackup,
 } from './view.js';
 
@@ -90,7 +90,7 @@ window.addEventListener('scroll', () => {
 }, true);
 
 const info = (key, label) =>
-  `<button type="button" class="info" data-tip="${esc(TIPS[key])}" aria-label="About ${esc(label)} result">i</button>`;
+  `<button type="button" class="info" data-tip="${esc(swapFixed(TIPS[key], client.state))}" aria-label="About ${esc(label)} result">i</button>`;
 
 // ---------------------------------------------------------------- shared settings
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -162,7 +162,7 @@ $('fixed-list').addEventListener('input', (e) => {
   const value = input.dataset.prop === 'points' ? clampField('points', input.value) : input.value;
   if (input.dataset.prop === 'label') {
     // keep the screen-reader names of this row in step with the new name while the row stays in place
-    const name = input.value || 'fixed points';
+    const name = input.value || swapFixed('fixed points', client.state);
     const li = input.closest('li');
     input.setAttribute('aria-label', `Name of ${name}`);
     li.querySelector('input[data-prop="points"]')?.setAttribute('aria-label', `Points for ${name}`);
@@ -221,6 +221,23 @@ function setValue(el, value) {
   if (document.activeElement !== el && el.value !== String(value)) el.value = String(value);
 }
 
+// Static text that mentions fixed points follows the alias. The original wording is kept so clearing the alias restores it.
+function applyAlias(s) {
+  for (const el of document.querySelectorAll('[data-tip], [aria-label], [placeholder]')) {
+    if (el.id === 'fixedLabel') continue;
+    for (const attr of ['data-tip', 'aria-label', 'placeholder']) {
+      const key = 'orig' + attr.replace(/-./g, (m) => m[1].toUpperCase()).replace(/^./, (m) => m.toUpperCase());
+      const cur = el.getAttribute(attr);
+      if (cur === null) continue;
+      if (el.dataset[key] === undefined) {
+        if (!/fixed (story )?points/i.test(cur)) continue;
+        el.dataset[key] = cur;
+      }
+      el.setAttribute(attr, swapFixed(el.dataset[key], s));
+    }
+  }
+}
+
 function render() {
   const s = client.state;
   const base = { ...DEFAULT_BASE, ...s.sprintBase };
@@ -232,6 +249,7 @@ function render() {
   setValue($('pointsPerPersonDay'), s.pointsPerPersonDay ?? 1);
   setValue($('bufferPct'), s.bufferPct ?? 0);
   setValue($('fixedLabel'), s.fixedLabel ?? '');
+  applyAlias(s);
   for (const i of document.querySelectorAll('#weekend-days input')) i.checked = s.weekendDays.includes(Number(i.value));
   $('holiday-list').innerHTML = s.holidays.map((d) =>
     `<li>${esc(fmtDate(d, { year: true }))}<button type="button" data-date="${d}" aria-label="Remove holiday ${esc(fmtDate(d, { year: true }))}">×</button></li>`).join('');
@@ -272,7 +290,7 @@ function renderSprint(s, cap, current) {
   document.querySelector('.override summary').textContent = custom ? 'Dates changed for this sprint' : 'Change this sprint\'s dates';
 
   $('net').textContent = fmtNum(cap.net);
-  $('warnings').innerHTML = cap.warnings.map((w) => `<p class="warning">${esc(w)}</p>`).join('');
+  $('warnings').innerHTML = cap.warnings.map((w) => `<p class="warning">${esc(swapFixed(w, s))}</p>`).join('');
 
   const bar = $('bar');
   const segs = barSegments(cap);
@@ -288,7 +306,7 @@ function renderSprint(s, cap, current) {
 
   const fixedItems = (s.sprints?.[selected]?.fixedItems ?? []).filter((i) => Number(i.points) > 0);
   $('bar-legend').innerHTML = [
-    ...(fixedItems.length ? fixedItems.map((i) => ['var(--fixed)', i.label || 'Fixed points', Number(i.points)]) : [['var(--fixed)', fixedName(s), cap.fixed]]),
+    ...(fixedItems.length ? fixedItems.map((i) => ['var(--fixed)', i.label || swapFixed('Fixed points', s), Number(i.points)]) : [['var(--fixed)', fixedName(s), cap.fixed]]),
     ['var(--spill)', 'Spillover', cap.spill],
     ['var(--buffer)', 'Buffer', cap.bufferPoints],
     ['var(--net)', 'For new stories', cap.net],
@@ -331,9 +349,9 @@ function renderFixed(s) {
     return;
   }
   list.innerHTML = items.length
-    ? items.map((i) => `<li><input type="text" class="item-label" maxlength="80" data-id="${esc(i.id)}" data-prop="label" value="${esc(i.label ?? '')}" placeholder="Fixed points" aria-label="Name of ${esc(i.label || 'fixed points')}">` +
-      `<input type="number" class="item-points" min="0" max="100000" step="0.5" inputmode="decimal" data-id="${esc(i.id)}" data-prop="points" value="${esc(String(i.points ?? 0))}" aria-label="Points for ${esc(i.label || 'fixed points')}">` +
-      `<button type="button" class="rm" data-id="${esc(i.id)}" aria-label="Remove ${esc(i.label || 'fixed points')}">×</button></li>`).join('') +
+    ? items.map((i) => `<li><input type="text" class="item-label" maxlength="80" data-id="${esc(i.id)}" data-prop="label" value="${esc(i.label ?? '')}" placeholder="${esc(swapFixed('Fixed points', s))}" aria-label="Name of ${esc(i.label || swapFixed('fixed points', s))}">` +
+      `<input type="number" class="item-points" min="0" max="100000" step="0.5" inputmode="decimal" data-id="${esc(i.id)}" data-prop="points" value="${esc(String(i.points ?? 0))}" aria-label="Points for ${esc(i.label || swapFixed('fixed points', s))}">` +
+      `<button type="button" class="rm" data-id="${esc(i.id)}" aria-label="Remove ${esc(i.label || swapFixed('fixed points', s))}">×</button></li>`).join('') +
       `<li class="item-total"><span class="item-label">Total</span><span class="item-points">${fmtNum(total)}</span></li>`
     : '<li class="empty-note">Nothing added yet. Add support, recurring work or committed items.</li>';
 }

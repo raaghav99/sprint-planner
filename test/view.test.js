@@ -188,13 +188,24 @@ test('fixedName: default when empty, missing or blank', () => {
   for (const s of [{}, null, { fixedLabel: '' }, { fixedLabel: '   ' }, { fixedLabel: 5 }]) assert.equal(fixedName(s), 'Fixed story points');
 });
 
-test('fixedName: shows the alias in brackets', () => {
-  assert.equal(fixedName({ fixedLabel: '  RCA ' }), 'Fixed story points (RCA)');
-  assert.equal(fixedName({ fixedLabel: '(RCA)' }), 'Fixed story points (RCA)');
+test('fixedName: the alias replaces the default name', () => {
+  assert.equal(fixedName({ fixedLabel: '  RCA ' }), 'RCA');
+  assert.equal(fixedName({ fixedLabel: '(RCA)' }), 'RCA');
 });
 
 test('backups include the custom name', () => {
   assert.ok(FIELD_KEYS.includes('fixedLabel'));
   const out = sanitizeBackup({ version: 2, fields: { sprintBase: { number: 1, startDate: '', length: 14 }, fixedLabel: 'RCA' } });
   assert.equal(out.fixedLabel, 'RCA');
+});
+
+import { swapFixed } from '../web/view.js';
+test('swapFixed: replaces every mention of fixed points with the alias', () => {
+  const s = { fixedLabel: 'RCA' };
+  assert.equal(swapFixed('Fixed points (3) and spillover (1)', s), 'RCA (3) and spillover (1)');
+  assert.equal(swapFixed('minus fixed story points and Fixed Story Points', s), 'minus RCA and RCA');
+});
+test('swapFixed: no alias leaves the text alone', () => {
+  assert.equal(swapFixed('Fixed points (3)', {}), 'Fixed points (3)');
+  assert.equal(swapFixed('Fixed points (3)', { fixedLabel: '  ' }), 'Fixed points (3)');
 });
