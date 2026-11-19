@@ -2,7 +2,7 @@ import { ROOM_ID, WORKER_URL } from './config.js';
 import { SyncClient } from './sync.js';
 import { parseLeaveSheet } from './parser.js';
 import {
-  capacityFor, currentSprint, dayCapacity, overview, sprintDatesFor, sprintProgress, sprintNumbers, spillInFor, DEFAULT_BASE,
+  capacityFor, currentSprint, dayCapacity, addDays, overview, sprintDatesFor, sprintProgress, sprintNumbers, spillInFor, DEFAULT_BASE,
 } from './sprints.js';
 import {
   applyPaste, barSegments, clampField, cycleLeave, FIELD_KEYS, fmtDate, fmtNum, fmtShort, makeFixedItem, makeMember,
@@ -101,7 +101,12 @@ $('weekend-days').innerHTML = DAY_NAMES.map((d, i) =>
 const baseNow = () => ({ ...DEFAULT_BASE, ...client.state.sprintBase });
 $('anchorNumber').addEventListener('input', (e) => client.update({ sprintBase: { ...baseNow(), number: clampField('number', e.target.value) } }));
 $('anchorStart').addEventListener('input', (e) => client.update({ sprintBase: { ...baseNow(), startDate: e.target.value } }));
-$('anchorLength').addEventListener('input', (e) => client.update({ sprintBase: { ...baseNow(), length: clampField('length', e.target.value) } }));
+$('anchorEnd').addEventListener('input', (e) => {
+  const b = baseNow();
+  if (!e.target.value || !b.startDate || e.target.value < b.startDate) return;
+  const length = Math.round((Date.parse(e.target.value) - Date.parse(b.startDate)) / 86400000) + 1;
+  client.update({ sprintBase: { ...b, length: clampField('length', length) } });
+});
 for (const f of ['pointsPerPersonDay', 'bufferPct']) $(f).addEventListener('input', (e) => client.update({ [f]: clampField(f, e.target.value) }));
 
 $('weekend-days').addEventListener('change', () => {
@@ -130,12 +135,8 @@ function updateSprint(n, patch) {
 }
 const sprintCfg = (n) => client.state.sprints?.[n] ?? {};
 
-$('sprint-tabs').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-n]');
-  if (b) { selected = Number(b.dataset.n); render(); }
-});
 $('overview').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-n]');
+  const b = e.target.closest('button[data-n]') ?? e.target.closest('tr[data-n]');
   if (b) { selected = Number(b.dataset.n); render(); $('sprint-heading').scrollIntoView({ block: 'start' }); }
 });
 
@@ -152,6 +153,21 @@ $('fixed-form').addEventListener('submit', (e) => {
   $('fixed-label').value = '';
   $('fixed-points').value = '';
   $('fixed-label').focus();
+});
+$('fixed-list').addEventListener('input', (e) => {
+  const input = e.target.closest('input[data-prop]');
+  if (!input) return;
+  const items = sprintCfg(selected).fixedItems ?? [];
+  const value = input.dataset.prop === 'points' ? clampField('points', input.value) : input.value;
+  if (input.dataset.prop === 'label') {
+    // keep the screen-reader names of this row in step with the new name while the row stays in place
+    const name = input.value || 'fixed points';
+    const li = input.closest('li');
+    input.setAttribute('aria-label', `Name of ${name}`);
+    li.querySelector('input[data-prop="points"]')?.setAttribute('aria-label', `Points for ${name}`);
+    li.querySelector('button.rm')?.setAttribute('aria-label', `Remove ${name}`);
+  }
+  updateSprint(selected, { fixedItems: items.map((i) => (i.id === input.dataset.id ? { ...i, [input.dataset.prop]: value } : i)) });
 });
 $('fixed-list').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-id]');
@@ -211,7 +227,7 @@ function render() {
 
   setValue($('anchorNumber'), base.number);
   setValue($('anchorStart'), base.startDate);
-  setValue($('anchorLength'), base.length);
+  setValue($('anchorEnd'), base.startDate ? addDays(base.startDate, base.length - 1) : '');
   setValue($('pointsPerPersonDay'), s.pointsPerPersonDay ?? 1);
   setValue($('bufferPct'), s.bufferPct ?? 0);
   for (const i of document.querySelectorAll('#weekend-days input')) i.checked = s.weekendDays.includes(Number(i.value));
@@ -231,7 +247,6 @@ function render() {
 
   const cap = hasSprints ? capacityFor(s, selected) : null;
   if (hasSprints) {
-    renderTabs(s, numbers, current);
     renderSprint(s, cap, current);
     renderLeft(s, now);
     renderFixed(s);
@@ -241,15 +256,6 @@ function render() {
   renderTeam(s, cap);
   renderToday(s, now);
   renderRetention(s);
-}
-
-function renderTabs(s, numbers, current) {
-  $('sprint-tabs').innerHTML = numbers.map((n) => {
-    const w = sprintDatesFor(s, n);
-    const tag = n === current ? 'Current' : n < current ? 'Past' : 'Upcoming';
-    return `<button type="button" role="tab" class="tab${n === current ? ' now' : ''}" data-n="${n}" aria-selected="${n === selected}" tabindex="${n === selected ? 0 : -1}">` +
-      `<span class="tab-n">Sprint ${n}</span><span class="tab-d">${esc(fmtShort(w.start))} – ${esc(fmtShort(w.end))}</span><span class="tab-tag">${tag}</span></button>`;
-  }).join('');
 }
 
 function renderSprint(s, cap, current) {
@@ -278,8 +284,9 @@ function renderSprint(s, cap, current) {
   }
   bar.setAttribute('aria-label', `Gross capacity ${fmtNum(cap.gross)} points: ${fmtNum(cap.fixed)} fixed, ${fmtNum(cap.spill)} spillover, ${fmtNum(cap.bufferPoints)} buffer, ${fmtNum(cap.net)} for new stories`);
 
+  const fixedItems = (s.sprints?.[selected]?.fixedItems ?? []).filter((i) => Number(i.points) > 0);
   $('bar-legend').innerHTML = [
-    ['var(--fixed)', 'Fixed', cap.fixed],
+    ...(fixedItems.length ? fixedItems.map((i) => ['var(--fixed)', i.label || 'Fixed points', Number(i.points)]) : [['var(--fixed)', 'Fixed', cap.fixed]]),
     ['var(--spill)', 'Spillover', cap.spill],
     ['var(--buffer)', 'Buffer', cap.bufferPoints],
     ['var(--net)', 'For new stories', cap.net],
@@ -313,9 +320,18 @@ function renderLeft(s, now) {
 
 function renderFixed(s) {
   const items = s.sprints?.[selected]?.fixedItems ?? [];
-  const total = items.reduce((a, i) => a + (Number(i.points) || 0), 0);
-  $('fixed-list').innerHTML = items.length
-    ? items.map((i) => `<li><span class="item-label">${esc(i.label || 'Fixed points')}</span><span class="item-points">${fmtNum(i.points)}</span><button type="button" class="rm" data-id="${esc(i.id)}" aria-label="Remove ${esc(i.label || 'fixed points')}">×</button></li>`).join('') +
+  const total = items.reduce((sum, i) => sum + (Number(i.points) || 0), 0);
+  const list = $('fixed-list');
+  // while someone types in a name or points box, only the total changes
+  if (document.activeElement?.matches?.('#fixed-list input')) {
+    const t = list.querySelector('.item-total .item-points');
+    if (t) t.textContent = fmtNum(total);
+    return;
+  }
+  list.innerHTML = items.length
+    ? items.map((i) => `<li><input type="text" class="item-label" maxlength="80" data-id="${esc(i.id)}" data-prop="label" value="${esc(i.label ?? '')}" placeholder="Fixed points" aria-label="Name of ${esc(i.label || 'fixed points')}">` +
+      `<input type="number" class="item-points" min="0" max="100000" step="0.5" inputmode="decimal" data-id="${esc(i.id)}" data-prop="points" value="${esc(String(i.points ?? 0))}" aria-label="Points for ${esc(i.label || 'fixed points')}">` +
+      `<button type="button" class="rm" data-id="${esc(i.id)}" aria-label="Remove ${esc(i.label || 'fixed points')}">×</button></li>`).join('') +
       `<li class="item-total"><span class="item-label">Total</span><span class="item-points">${fmtNum(total)}</span></li>`
     : '<li class="empty-note">Nothing added yet. Add support, recurring work or committed items.</li>';
 }
@@ -335,7 +351,7 @@ function renderSpill(s) {
 function renderOverview(s, now) {
   const rows = overview(s, now);
   $('overview').innerHTML = `<thead><tr><th scope="col">Sprint</th><th scope="col">Dates</th><th scope="col" class="n">Active people</th><th scope="col" class="n">Gross</th><th scope="col" class="n">Fixed</th><th scope="col" class="n">Spillover in</th><th scope="col" class="n">For new stories</th></tr></thead><tbody>${
-    rows.map((r) => `<tr class="${r.number === selected ? 'sel' : ''}"><th scope="row"><button type="button" class="link" data-n="${r.number}">Sprint ${r.number}</button>${r.isCurrent ? ' <span class="pill">Current</span>' : ''}</th><td>${esc(fmtShort(r.start))} – ${esc(fmtShort(r.end))}</td><td class="n">${r.activeMembers}</td><td class="n">${fmtNum(r.gross)}</td><td class="n">${fmtNum(r.fixed)}</td><td class="n">${fmtNum(r.spillIn)}</td><td class="n strong">${fmtNum(r.net)}</td></tr>`).join('')
+    rows.map((r) => `<tr data-n="${r.number}" class="${r.number === selected ? 'sel' : ''}"><th scope="row"><button type="button" class="link" data-n="${r.number}">Sprint ${r.number}</button>${r.isCurrent ? ' <span class="pill">Current</span>' : ''}</th><td>${esc(fmtShort(r.start))} – ${esc(fmtShort(r.end))}</td><td class="n">${r.activeMembers}</td><td class="n">${fmtNum(r.gross)}</td><td class="n">${fmtNum(r.fixed)}</td><td class="n">${fmtNum(r.spillIn)}</td><td class="n strong">${fmtNum(r.net)}</td></tr>`).join('')
   }</tbody>`;
 }
 
@@ -382,18 +398,35 @@ function renderTeam(s, cap) {
   const holidays = new Set(s.holidays);
   const dow = (d) => new Date(`${d}T00:00:00Z`).getUTCDay();
 
-  const head = dates.map((d) => {
-    const rest = weekend.has(dow(d)) ? 'weekend' : holidays.has(d) ? 'holiday' : '';
+  // columns: one per day, except that a run of weekend days (Saturday and Sunday) is a single "Weekend" column
+  const cols = [];
+  for (const d of dates) {
+    const last = cols[cols.length - 1];
+    if (weekend.has(dow(d))) {
+      if (last?.weekend) last.dates.push(d); else cols.push({ weekend: true, dates: [d] });
+    } else cols.push({ weekend: false, dates: [d], date: d });
+  }
+
+  const head = cols.map((col) => {
+    if (col.weekend) {
+      const from = col.dates[0], to = col.dates[col.dates.length - 1];
+      const range = from === to ? String(Number(from.slice(8))) : `${Number(from.slice(8))}–${Number(to.slice(8))}`;
+      return `<th scope="col" class="dh weekend" title="Weekend ${esc(fmtDate(from))}${from === to ? '' : ` to ${esc(fmtDate(to))}`}"><i></i><span>Wknd</span><b>${range}</b></th>`;
+    }
+    const d = col.date;
+    const rest = holidays.has(d) ? 'holiday' : '';
     const first = d === dates[0] || d.endsWith('-01');
-    return `<th scope="col" class="dh ${rest}" title="${esc(fmtDate(d, { year: true }))}${rest ? ` (${rest})` : ''}"><i>${first ? fmtDate(d).split(' ')[2] ?? '' : ''}</i><span>${DAY_NAMES[dow(d)].slice(0, 2)}</span><b>${Number(d.slice(8))}</b></th>`;
+    return `<th scope="col" class="dh ${rest}" title="${esc(fmtDate(d, { year: true }))}${rest ? ' (holiday)' : ''}"><i>${first ? fmtDate(d).split(' ')[2] ?? '' : ''}</i><span>${DAY_NAMES[dow(d)].slice(0, 2)}</span><b>${Number(d.slice(8))}</b></th>`;
   }).join('');
 
   const rows = s.members.map((m) => {
     const c = byId.get(m.id);
     const open = expandedId === m.id;
     const note = c ? memberNote(c) : '';
-    const cells = dates.map((d) => {
-      const nonWorking = weekend.has(dow(d)) || holidays.has(d);
+    const cells = cols.map((col) => {
+      if (col.weekend) return '<td class="dc nw wk"><span class="cell rest" title="Weekend"></span></td>';
+      const d = col.date;
+      const nonWorking = holidays.has(d);
       if ((m.from && d < m.from) || (m.until && d > m.until)) return '<td class="dc"><span class="cell na" title="Not on the team"></span></td>';
       const p = portionOn(m.leave, d);
       const state = p === 0 ? (nonWorking ? 'rest' : 'on') : p === 1 ? 'off' : 'half';
@@ -405,7 +438,7 @@ function renderTeam(s, cap) {
       `<td class="psum" data-sum="${esc(m.id)}">${c ? sumCell(c) : ''}</td>` +
       `<td class="pact"><button type="button" class="link edit" data-member="${esc(m.id)}" aria-expanded="${open}" aria-label="Edit dates for ${esc(m.name)}">${open ? 'Close' : 'Dates'}</button>` +
       `<button type="button" class="rm" data-member="${esc(m.id)}" aria-label="Remove ${esc(m.name)}">×</button></td></tr>` +
-      (open ? `<tr class="dates-row"><td colspan="${dates.length + 3}">${personDates(m)}</td></tr>` : '');
+      (open ? `<tr class="dates-row"><td colspan="${cols.length + 3}">${personDates(m)}</td></tr>` : '');
   }).join('');
 
   table.innerHTML = `<thead><tr><th scope="col" class="pname">Person</th>${head}<th scope="col" class="psum">Days</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead><tbody>${rows}</tbody>`;
@@ -438,7 +471,7 @@ function renderToday(s, now) {
   const d = dayCapacity(s, now);
   $('cur-n').textContent = String(current);
   $('cur-points').textContent = fmtNum(cap.net);
-  $('cur-days').textContent = prog?.status === 'current' ? String(prog.workingLeft) : '0';
+  $('cur-days').textContent = prog?.status === 'current' ? String(prog.workingLeft) : prog?.status === 'upcoming' ? String(cap.workingDays) : '0';
   $('cur-active').textContent = String(cap.activeMembers);
   $('cur-leave-count').textContent = String(d.onLeave.length);
 

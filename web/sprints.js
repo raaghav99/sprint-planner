@@ -14,24 +14,40 @@ export function addDays(iso, n) {
 const baseOf = (state) => ({ ...DEFAULT_BASE, ...(state.sprintBase ?? {}) });
 const validBase = (b) => parseISO(b.startDate) !== null && b.length >= 1;
 
+const diffDays = (a, b) => Math.round((parseISO(b) - parseISO(a)) / DAY_MS);
+
+/**
+ * Days from one sprint's first day to the next sprint's first day. A sprint that ends on a Friday is
+ * followed by a weekend gap, and the next sprint starts on the next working day (Monday).
+ */
+export function strideFor(state) {
+  const b = baseOf(state);
+  const weekend = new Set(state.weekendDays ?? [0, 6]);
+  let next = addDays(b.startDate, b.length);
+  for (let i = 0; i < 7 && weekend.has(dayOfWeek(next)); i++) next = addDays(next, 1);
+  return diffDays(b.startDate, next);
+}
+
 /** Dates of sprint `n`, or null while the anchor sprint has no start date. */
 export function sprintDatesFor(state, n) {
   const b = baseOf(state);
   if (!validBase(b)) return null;
   const over = state.sprints?.[n] ?? {};
-  const start = over.startDate || addDays(b.startDate, (n - b.number) * b.length);
+  const start = over.startDate || addDays(b.startDate, (n - b.number) * strideFor(state));
   const end = over.endDate && over.endDate >= start ? over.endDate : addDays(start, b.length - 1);
   const dates = [];
   for (let t = parseISO(start); t <= parseISO(end); t += DAY_MS) dates.push(toISO(t));
   return { number: n, start, end, numDays: dates.length, dates };
 }
 
-/** The sprint that contains `today`, following the anchor sprint's rhythm. Null if no anchor. */
+/** The sprint that is running on `today`. In the weekend gap after a sprint it is the next one. Null if no anchor. */
 export function currentSprint(state, today) {
   const b = baseOf(state);
   if (!validBase(b) || parseISO(today) === null) return null;
-  const days = Math.round((parseISO(today) - parseISO(b.startDate)) / DAY_MS);
-  return b.number + Math.floor(days / b.length);
+  const stride = strideFor(state);
+  const n = b.number + Math.floor(diffDays(b.startDate, today) / stride);
+  const end = addDays(b.startDate, (n - b.number) * stride + b.length - 1);
+  return today > end ? n + 1 : n;
 }
 
 /** The sprint numbers on screen: 3 before the current one, the current one, 3 after (never below 1). */

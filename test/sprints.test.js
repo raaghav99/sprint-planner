@@ -180,3 +180,35 @@ test('sprintProgress: no anchor or bad date gives null', () => {
   assert.equal(sprintProgress({}, 14, '2026-11-18'), null);
   assert.equal(sprintProgress(prog, 14, 'x'), null);
 });
+
+// ---------- sprints that end on a Friday: weekend gap, next one starts Monday ----------
+import { capacityFor, strideFor, sprintDatesFor as datesFor, currentSprint as curSprint } from '../web/sprints.js';
+
+const fri = { sprintBase: { number: 14, startDate: '2026-11-09', length: 12 }, weekendDays: [0, 6], holidays: [] }; // Mon 9 to Fri 20
+
+test('a Mon to Fri sprint is followed by the weekend, then the next sprint starts on Monday', () => {
+  assert.equal(strideFor(fri), 14);
+  const d = datesFor(fri, 14);
+  assert.deepEqual([d.start, d.end, d.numDays], ['2026-11-09', '2026-11-20', 12]);
+  assert.deepEqual([datesFor(fri, 15).start, datesFor(fri, 15).end], ['2026-11-23', '2026-12-04']);
+  assert.deepEqual([datesFor(fri, 13).start, datesFor(fri, 13).end], ['2026-10-26', '2026-11-06']);
+});
+
+test('the working days of a Mon to Fri sprint are 10, with no weekend at either end', () => {
+  const c = capacityFor({ ...fri, members: [], pointsPerPersonDay: 1, bufferPct: 0, sprints: {} }, 15);
+  assert.equal(c.workingDays, 10);
+});
+
+test('currentSprint: inside, on the last day, and in the weekend gap (rolls to the next sprint)', () => {
+  assert.equal(curSprint(fri, '2026-11-18'), 14);
+  assert.equal(curSprint(fri, '2026-11-20'), 14);
+  assert.equal(curSprint(fri, '2026-11-21'), 15); // Saturday after sprint 14
+  assert.equal(curSprint(fri, '2026-11-23'), 15);
+  assert.equal(curSprint(fri, '2026-11-08'), 14); // Sunday before sprint 14: gap after 13, so 14 is next
+});
+
+test('with no weekend days the sprints run back to back', () => {
+  const s = { ...fri, weekendDays: [] };
+  assert.equal(strideFor(s), 12);
+  assert.equal(datesFor(s, 15).start, '2026-11-21');
+});

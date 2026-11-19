@@ -39,8 +39,8 @@
           <input id="anchorStart" type="date">
         </div>
         <div class="field">
-          <label for="anchorLength">Length in days <button type="button" class="info" data-tip="Calendar days per sprint, weekends included. A two-week sprint is 14 days. Change one sprint's dates later if it ran longer or shorter." aria-label="About sprint length">i</button></label>
-          <input id="anchorLength" type="number" min="1" max="60" step="1" inputmode="numeric">
+          <label for="anchorEnd">Ends on <button type="button" class="info" data-tip="The last day of that sprint, for example the Friday. Every sprint is the same length and starts on the next working day, so the weekend sits between sprints and is never counted." aria-label="About end date">i</button></label>
+          <input id="anchorEnd" type="date">
         </div>
       </section>
 
@@ -75,7 +75,7 @@
       </section>
 
       <div id="rail-sprint" class="rail-sprint" hidden>
-        <p class="rail-for">For <b id="rail-sprint-name">this sprint</b>. Pick another sprint above to change its numbers.</p>
+        <p class="rail-for">For <b id="rail-sprint-name">this sprint</b>. Pick another sprint in the All sprints table below to change its numbers.</p>
 
           <section class="fixed rail-card" aria-labelledby="h-fixed">
             <h2 id="h-fixed">Fixed story points
@@ -130,7 +130,6 @@
           <p id="today-leave" class="today-leave"></p>
         </aside>
 
-        <div id="sprint-tabs" class="tabs" role="tablist" aria-label="Sprints"></div>
 
         <section class="result" aria-labelledby="sprint-heading">
           <div class="sprint-head">
@@ -193,7 +192,7 @@
 
       <section id="overview-section" class="overview" aria-labelledby="h-overview" hidden>
         <h2 id="h-overview">All sprints
-          <button type="button" class="info" data-tip="The last three sprints, the current one and the next three side by side. Active people are those with at least one available day in that sprint, so people who joined or left show up correctly. Select a row to open that sprint." aria-label="About all sprints">i</button>
+          <button type="button" class="info" data-tip="The last three sprints, the current one and the next three side by side. Active people are those with at least one available day in that sprint, so people who joined or left show up correctly. Select a sprint to open it." aria-label="About all sprints">i</button>
         </h2>
         <div class="table-wrap"><table id="overview" class="ov"></table></div>
       </section>

@@ -371,3 +371,14 @@ dialog form { display: grid; gap: 14px; }
 .rail-for b { color: var(--ink); }
 .rail-card { display: grid; gap: 8px; padding-top: 14px; border-top: 2px solid var(--ink); min-width: 0; }
 .rail-card h2 { display: inline-flex; align-items: center; gap: 8px; }
+
+/* fixed items: editable name and points */
+.items li input { min-height: 34px; padding: 4px 8px; }
+.items li input.item-label { flex: 1; min-width: 0; width: auto; }
+.items li input.item-points { width: 76px; flex: none; font-weight: 600; text-align: right; }
+.items li.item-total .item-label { padding-left: 9px; }
+.items li.item-total .item-points { width: 76px; text-align: right; padding-right: 9px; }
+.cal td.wk, .cal th.dh.weekend { min-width: 34px; }
+
+.rail-sprint > *, .rail-card > * { min-width: 0; }
+.items li input.item-label { width: 0; flex: 1 1 0; }
